@@ -1,0 +1,6 @@
+# Copy this file to a local, untracked paths.yaml and edit paths for the machine.
+project_root: /data/gauss/ldh/projects/norm-route
+mvtec_root: /path/to/MVTec_AD
+visa_root: /path/to/VisA
+output_root: /data/gauss/ldh/projects/norm-route/outputs
+cache_root: /data/gauss/ldh/projects/norm-route/.cache

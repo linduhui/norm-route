@@ -1,0 +1,20 @@
+fold_1:
+  - carpet
+  - bottle
+  - cable
+fold_2:
+  - grid
+  - capsule
+  - hazelnut
+fold_3:
+  - leather
+  - metal_nut
+  - pill
+fold_4:
+  - tile
+  - screw
+  - transistor
+fold_5:
+  - wood
+  - toothbrush
+  - zipper
