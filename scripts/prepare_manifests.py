@@ -53,6 +53,7 @@ def main() -> None:
     print(f"Wrote {agent_path}")
     print(f"Wrote {evaluator_path}")
     print(f"Wrote {audit_path}")
+    _print_audit_summary(rows.audit)
 
 
 def _run_metadata(args: argparse.Namespace, audit: dict) -> dict:
@@ -93,6 +94,20 @@ def _git_commit() -> str:
     if completed.returncode != 0:
         return "unknown"
     return completed.stdout.strip()
+
+
+def _print_audit_summary(audit: dict) -> None:
+    counts = audit["counts"]
+    print("Audit summary:")
+    print(f"  categories: {counts['categories']}")
+    print(f"  train_good_images: {counts['train_good_images']}")
+    print(f"  test_good_images: {counts['test_good_images']}")
+    print(f"  test_anomaly_images: {counts['test_anomaly_images']}")
+    print(f"  missing_masks: {counts['missing_masks']}")
+    print(f"  duplicate_image_ids: {counts['duplicate_image_ids']}")
+    print(f"  broken_image_files: {counts['broken_image_files']}")
+    print(f"  mask_size_mismatches: {counts['mask_size_mismatches']}")
+    print(f"  broken_mask_files: {counts['broken_mask_files']}")
 
 
 if __name__ == "__main__":
