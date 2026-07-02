@@ -1,7 +1,7 @@
 """Generate the Stage 1 Gate acceptance report from existing artifacts.
 
-This script is reporting-only. It reads existing audit, support summary,
-leakage, fake expert evaluation, docs, and config files, then writes a Markdown
+This script is reporting-only. It reads existing audit, support, leakage,
+FakeExpert evaluation, pytest, docs, and config files, then writes a Markdown
 report. It does not run models, modify experiment results, or invent missing
 numbers.
 """
@@ -13,7 +13,6 @@ import csv
 import json
 from dataclasses import dataclass
 from pathlib import Path
-import sys
 from typing import Any
 
 
@@ -29,18 +28,9 @@ class ArtifactSpec:
     relative_path: Path
 
 
-ARTIFACTS = [
+AUDIT_ARTIFACTS = [
     ArtifactSpec("mvtec_audit", "MVTec full audit", Path("mvtec_full_audit.json")),
     ArtifactSpec("visa_audit", "VisA full audit", Path("visa_full_audit.json")),
-    ArtifactSpec("mvtec_support", "MVTec support summary", Path("mvtec_support_summary.csv")),
-    ArtifactSpec("visa_support", "VisA support summary", Path("visa_support_summary.csv")),
-    ArtifactSpec("mvtec_leakage", "MVTec leakage report", Path("mvtec_leakage_report.json")),
-    ArtifactSpec("visa_leakage", "VisA leakage report", Path("visa_leakage_report.json")),
-    ArtifactSpec(
-        "fake_expert_metrics",
-        "FakeExpert metrics stub",
-        Path("fake_expert_eval") / "metrics_stub.json",
-    ),
 ]
 
 REFERENCE_FILES = [
@@ -48,6 +38,8 @@ REFERENCE_FILES = [
     ArtifactSpec("data_leakage_policy", "Data leakage policy", Path("docs") / "data_leakage_policy.md"),
     ArtifactSpec("folds", "Fold config", Path("configs") / "folds.yaml"),
 ]
+
+FAILURE_REPORT_NAME = "evaluation_failures.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--project-root",
         default=str(PROJECT_ROOT),
-        help="Repository root used to find docs/task_spec.md, docs/data_leakage_policy.md, and configs/folds.yaml.",
+        help="Repository root used to find docs, configs, support sets, and evaluation artifacts.",
     )
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT), help="Markdown report output path.")
     return parser.parse_args()
@@ -79,7 +71,7 @@ def main() -> int:
 
 
 def build_report(*, stage1_dir: Path, project_root: Path) -> str:
-    artifacts = {spec.key: _load_artifact(stage1_dir / spec.relative_path, spec) for spec in ARTIFACTS}
+    artifacts = _load_artifacts(stage1_dir=stage1_dir, project_root=project_root)
     references = {
         spec.key: _load_reference(project_root / spec.relative_path, spec)
         for spec in REFERENCE_FILES
@@ -137,16 +129,22 @@ def build_report(*, stage1_dir: Path, project_root: Path) -> str:
             "",
             *_fake_expert_section(artifacts["fake_expert_metrics"]),
             "",
-            "## 8. 当前已知问题",
+            "## 8. Evaluation与pytest结果",
+            "",
+            *_evaluation_section(artifacts["fake_expert_metrics"]),
+            "",
+            *_pytest_section(artifacts["pytest_server"]),
+            "",
+            "## 9. 当前已知问题",
             "",
             *_known_issues(artifacts, references),
             "",
-            "## 9. 是否满足进入Stage 2的Gate条件",
+            "## 10. 是否满足进入Stage 2的Gate条件",
             "",
             f"- Gate结论: **{gate['label']}**",
             f"- 判定依据: {gate['reason']}",
             "",
-            "## 10. 下一阶段PatchCore/WinCLIP/AnomalyDINO准备事项",
+            "## 11. 下一阶段PatchCore/WinCLIP/AnomalyDINO准备事项",
             "",
             "- PatchCore: 接入前固定 support_set_id、k_shot、seed，并记录 config/git commit/environment/predictions/failures。",
             "- WinCLIP: 确认 prompt 与阈值选择不读取目标 test label/mask/defect_type，不使用目标异常样本调参。",
@@ -157,28 +155,47 @@ def build_report(*, stage1_dir: Path, project_root: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _load_artifact(path: Path, spec: ArtifactSpec) -> dict[str, Any]:
-    record: dict[str, Any] = {
-        "key": spec.key,
-        "title": spec.title,
+def _load_artifacts(*, stage1_dir: Path, project_root: Path) -> dict[str, dict[str, Any]]:
+    artifacts = {
+        spec.key: _load_artifact(stage1_dir / spec.relative_path, spec)
+        for spec in AUDIT_ARTIFACTS
+    }
+    artifacts["mvtec_support"] = _load_support(project_root=project_root, stage1_dir=stage1_dir, dataset="mvtec")
+    artifacts["visa_support"] = _load_support(project_root=project_root, stage1_dir=stage1_dir, dataset="visa")
+    artifacts["mvtec_leakage"] = _load_leakage(stage1_dir=stage1_dir, dataset="mvtec")
+    artifacts["visa_leakage"] = _load_leakage(stage1_dir=stage1_dir, dataset="visa")
+    artifacts["fake_expert_metrics"] = _load_fake_expert(project_root=project_root, stage1_dir=stage1_dir)
+    artifacts["pytest_server"] = _load_pytest_log(stage1_dir=stage1_dir)
+    return artifacts
+
+
+def _base_record(*, key: str, title: str, path: Path, relative_path: str) -> dict[str, Any]:
+    return {
+        "key": key,
+        "title": title,
         "path": path,
-        "relative_path": spec.relative_path.as_posix(),
-        "exists": path.is_file(),
+        "relative_path": relative_path,
+        "exists": False,
         "parse_error": "",
         "data": None,
     }
+
+
+def _load_artifact(path: Path, spec: ArtifactSpec) -> dict[str, Any]:
+    record = _base_record(
+        key=spec.key,
+        title=spec.title,
+        path=path,
+        relative_path=spec.relative_path.as_posix(),
+    )
+    record["exists"] = path.is_file()
     if not path.is_file():
         return record
     try:
         if path.suffix.lower() == ".json":
             record["data"] = json.loads(path.read_text(encoding="utf-8"))
         elif path.suffix.lower() == ".csv":
-            with path.open("r", newline="", encoding="utf-8") as handle:
-                reader = csv.DictReader(handle)
-                record["data"] = {
-                    "fieldnames": reader.fieldnames or [],
-                    "rows": [dict(row) for row in reader],
-                }
+            record["data"] = _read_csv_rows(path)
         else:
             record["data"] = path.read_text(encoding="utf-8")
     except (csv.Error, json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
@@ -186,22 +203,173 @@ def _load_artifact(path: Path, spec: ArtifactSpec) -> dict[str, Any]:
     return record
 
 
-def _load_reference(path: Path, spec: ArtifactSpec) -> dict[str, Any]:
-    record = {
-        "key": spec.key,
-        "title": spec.title,
-        "path": path,
-        "relative_path": spec.relative_path.as_posix(),
-        "exists": path.is_file(),
-        "parse_error": "",
-        "data": None,
+def _load_support(*, project_root: Path, stage1_dir: Path, dataset: str) -> dict[str, Any]:
+    summary_path = stage1_dir / f"{dataset}_support_summary.csv"
+    title = f"{_dataset_title(dataset)} support summary"
+    record = _base_record(
+        key=f"{dataset}_support",
+        title=title,
+        path=summary_path,
+        relative_path=f"{dataset}_support_summary.csv",
+    )
+    if summary_path.is_file():
+        loaded = _load_artifact(summary_path, ArtifactSpec(f"{dataset}_support", title, Path(summary_path.name)))
+        if isinstance(loaded.get("data"), dict):
+            loaded["data"]["layout"] = "summary_csv"
+            loaded["data"]["source_file_count"] = 1
+        return loaded
+
+    support_dir = project_root / "data" / "support_sets"
+    files = sorted(support_dir.glob(f"{dataset}_k*_seed*.csv"))
+    record["path"] = support_dir
+    record["relative_path"] = f"data/support_sets/{dataset}_k*_seed*.csv"
+    record["exists"] = bool(files)
+    if not files:
+        return record
+
+    rows: list[dict[str, str]] = []
+    fieldnames: list[str] = []
+    parse_errors: list[str] = []
+    for path in files:
+        try:
+            data = _read_csv_rows(path)
+            if not fieldnames:
+                fieldnames = list(data["fieldnames"])
+            rows.extend(data["rows"])
+        except (csv.Error, UnicodeDecodeError, OSError) as exc:
+            parse_errors.append(f"{path.name}: {type(exc).__name__}: {exc}")
+    record["parse_error"] = "; ".join(parse_errors)
+    record["data"] = {
+        "layout": "support_set_directory",
+        "fieldnames": fieldnames,
+        "rows": rows,
+        "source_files": [path.as_posix() for path in files],
+        "source_file_count": len(files),
     }
+    return record
+
+
+def _load_leakage(*, stage1_dir: Path, dataset: str) -> dict[str, Any]:
+    report_path = stage1_dir / f"{dataset}_leakage_report.json"
+    title = f"{_dataset_title(dataset)} leakage report"
+    record = _base_record(
+        key=f"{dataset}_leakage",
+        title=title,
+        path=report_path,
+        relative_path=f"{dataset}_leakage_report.json",
+    )
+    if report_path.is_file():
+        return _load_artifact(report_path, ArtifactSpec(f"{dataset}_leakage", title, Path(report_path.name)))
+
+    leakage_dir = stage1_dir / "leakage"
+    files = sorted(leakage_dir.glob(f"{dataset}_*_leakage.json"))
+    record["path"] = leakage_dir
+    record["relative_path"] = f"outputs/stage1_gate/leakage/{dataset}_*_leakage.json"
+    record["exists"] = bool(files)
+    if not files:
+        return record
+
+    reports: list[dict[str, Any]] = []
+    parse_errors: list[str] = []
+    for path in files:
+        try:
+            reports.append(json.loads(path.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+            parse_errors.append(f"{path.name}: {type(exc).__name__}: {exc}")
+
+    error_count = sum(_int_value(report.get("error_count")) for report in reports)
+    warning_count = sum(_int_value(report.get("warning_count")) for report in reports)
+    issues = [issue for report in reports for issue in report.get("issues", []) if isinstance(report.get("issues", []), list)]
+    ok = bool(reports) and all(report.get("ok") is True for report in reports)
+    support_rows = sum(_int_value(report.get("counts", {}).get("support_rows")) for report in reports if isinstance(report.get("counts"), dict))
+    support_sets = sum(_int_value(report.get("counts", {}).get("support_sets")) for report in reports if isinstance(report.get("counts"), dict))
+    record["parse_error"] = "; ".join(parse_errors)
+    record["data"] = {
+        "layout": "leakage_directory",
+        "ok": ok,
+        "error_count": error_count,
+        "warning_count": warning_count,
+        "issues": issues,
+        "counts": {
+            "report_files": len(files),
+            "support_rows_total": support_rows,
+            "support_sets_total": support_sets,
+        },
+        "source_files": [path.as_posix() for path in files],
+    }
+    return record
+
+
+def _load_fake_expert(*, project_root: Path, stage1_dir: Path) -> dict[str, Any]:
+    candidates = [
+        stage1_dir / "fake_expert_eval" / "metrics_stub.json",
+        project_root / "outputs" / "evaluation_fake_expert" / "metrics_stub.json",
+    ]
+    chosen = next((path for path in candidates if path.is_file()), candidates[0])
+    record = _load_artifact(
+        chosen,
+        ArtifactSpec("fake_expert_metrics", "FakeExpert metrics stub", _relative_to_project(chosen, project_root, stage1_dir)),
+    )
+    if record["exists"] and isinstance(record["data"], dict):
+        failure_path = chosen.parent / FAILURE_REPORT_NAME
+        record["data"]["failure_report_path"] = _relative_to_project(failure_path, project_root, stage1_dir).as_posix()
+        if failure_path.is_file():
+            try:
+                record["data"]["failure_report"] = json.loads(failure_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+                record["parse_error"] = f"{record['parse_error']}; {FAILURE_REPORT_NAME}: {type(exc).__name__}: {exc}".strip("; ")
+        joined_path = chosen.parent / "per_sample_joined.csv"
+        if joined_path.is_file():
+            record["data"]["joined_csv_path"] = _relative_to_project(joined_path, project_root, stage1_dir).as_posix()
+    return record
+
+
+def _load_pytest_log(*, stage1_dir: Path) -> dict[str, Any]:
+    path = stage1_dir / "pytest_server.log"
+    record = _base_record(
+        key="pytest_server",
+        title="Server pytest log",
+        path=path,
+        relative_path="outputs/stage1_gate/pytest_server.log",
+    )
+    record["exists"] = path.is_file()
+    if not path.is_file():
+        return record
+    try:
+        text = path.read_text(encoding="utf-8")
+        record["data"] = {
+            "text": text,
+            "passed": " passed" in text and " failed" not in text,
+            "summary": _last_nonempty_line(text),
+        }
+    except (UnicodeDecodeError, OSError) as exc:
+        record["parse_error"] = f"{type(exc).__name__}: {exc}"
+    return record
+
+
+def _load_reference(path: Path, spec: ArtifactSpec) -> dict[str, Any]:
+    record = _base_record(
+        key=spec.key,
+        title=spec.title,
+        path=path,
+        relative_path=spec.relative_path.as_posix(),
+    )
+    record["exists"] = path.is_file()
     if path.is_file():
         try:
             record["data"] = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError) as exc:
             record["parse_error"] = f"{type(exc).__name__}: {exc}"
     return record
+
+
+def _read_csv_rows(path: Path) -> dict[str, Any]:
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        return {
+            "fieldnames": reader.fieldnames or [],
+            "rows": [dict(row) for row in reader],
+        }
 
 
 def _artifact_table(artifacts: dict[str, dict[str, Any]], references: dict[str, dict[str, Any]]) -> list[str]:
@@ -247,13 +415,15 @@ def _audit_section(record: dict[str, Any]) -> list[str]:
 
 def _support_section(record: dict[str, Any]) -> list[str]:
     if not record["exists"]:
-        return ["- support summary file: missing"]
+        return ["- support summary/source files: missing"]
     if record["parse_error"]:
-        return [f"- support summary file: parse_error: `{record['parse_error']}`"]
+        return [f"- support summary/source files: parse_error: `{record['parse_error']}`"]
     data = record["data"] if isinstance(record["data"], dict) else {}
     rows = data.get("rows", []) if isinstance(data.get("rows"), list) else []
     fieldnames = data.get("fieldnames", []) if isinstance(data.get("fieldnames"), list) else []
     lines = [
+        f"- layout: {_value(data.get('layout'))}",
+        f"- source_files: {_value(data.get('source_file_count'))}",
         f"- rows: {len(rows)}",
         f"- columns: {_value(', '.join(str(name) for name in fieldnames) if fieldnames else None)}",
     ]
@@ -261,24 +431,18 @@ def _support_section(record: dict[str, Any]) -> list[str]:
         if column in fieldnames:
             values = sorted({row.get(column, "") for row in rows})
             lines.append(f"- unique {column}: {len(values)} ({_compact_values(values)})")
-    if rows:
-        lines.extend(["", "| " + " | ".join(_md_escape(str(name)) for name in fieldnames) + " |"])
-        lines.append("| " + " | ".join("---" for _ in fieldnames) + " |")
-        for row in rows[:10]:
-            lines.append("| " + " | ".join(_md_escape(str(row.get(name, ""))) for name in fieldnames) + " |")
-        if len(rows) > 10:
-            lines.append(f"- ... {len(rows) - 10} additional rows omitted from report display.")
     return lines
 
 
 def _leakage_section(record: dict[str, Any]) -> list[str]:
     if not record["exists"]:
-        return ["- leakage report file: missing"]
+        return ["- leakage report/source files: missing"]
     if record["parse_error"]:
-        return [f"- leakage report file: parse_error: `{record['parse_error']}`"]
+        return [f"- leakage report/source files: parse_error: `{record['parse_error']}`"]
     data = record["data"] if isinstance(record["data"], dict) else {}
     counts = data.get("counts", {}) if isinstance(data.get("counts"), dict) else {}
     lines = [
+        f"- layout: {_value(data.get('layout'))}",
         f"- ok: {_value(data.get('ok'))}",
         f"- error_count: {_value(data.get('error_count'))}",
         f"- warning_count: {_value(data.get('warning_count'))}",
@@ -312,8 +476,46 @@ def _fake_expert_section(record: dict[str, Any]) -> list[str]:
         "| --- | --- |",
     ]
     for key in sorted(data):
+        if key == "failure_report":
+            continue
         lines.append(f"| `{_md_escape(str(key))}` | {_md_escape(_value(data[key]))} |")
     return lines
+
+
+def _evaluation_section(record: dict[str, Any]) -> list[str]:
+    if not record["exists"] or record["parse_error"] or not isinstance(record["data"], dict):
+        return ["- evaluation artifacts: missing or unreadable"]
+    failure_report = record["data"].get("failure_report")
+    lines = [
+        f"- joined_csv: {_value(record['data'].get('joined_csv_path'))}",
+        f"- failure_report: {_value(record['data'].get('failure_report_path'))}",
+    ]
+    if isinstance(failure_report, dict):
+        missing = failure_report.get("missing_predictions", [])
+        extra = failure_report.get("extra_predictions", [])
+        failed = failure_report.get("failed_predictions", [])
+        lines.extend(
+            [
+                f"- missing_predictions: {len(missing) if isinstance(missing, list) else 'unknown'}",
+                f"- extra_predictions: {len(extra) if isinstance(extra, list) else 'unknown'}",
+                f"- failed_predictions: {len(failed) if isinstance(failed, list) else 'unknown'}",
+            ]
+        )
+    else:
+        lines.append("- evaluation_failures.json: missing")
+    return lines
+
+
+def _pytest_section(record: dict[str, Any]) -> list[str]:
+    if not record["exists"]:
+        return ["- pytest_server.log: missing"]
+    if record["parse_error"]:
+        return [f"- pytest_server.log: parse_error: `{record['parse_error']}`"]
+    data = record["data"] if isinstance(record["data"], dict) else {}
+    return [
+        f"- pytest passed: {_value(data.get('passed'))}",
+        f"- pytest summary: {_value(data.get('summary'))}",
+    ]
 
 
 def _known_issues(artifacts: dict[str, dict[str, Any]], references: dict[str, dict[str, Any]]) -> list[str]:
@@ -345,15 +547,36 @@ def _known_issues(artifacts: dict[str, dict[str, Any]], references: dict[str, di
         if record["exists"] and not record["parse_error"] and isinstance(record["data"], dict):
             if record["data"].get("ok") is not True:
                 issues.append(f"- `{record['relative_path']}`: leakage ok is {_value(record['data'].get('ok'))}")
+            for count_key in ["error_count", "warning_count"]:
+                value = record["data"].get(count_key)
+                if isinstance(value, int) and value > 0:
+                    issues.append(f"- `{record['relative_path']}`: {count_key}={value}")
 
     fake_metrics = artifacts["fake_expert_metrics"]
     if fake_metrics["exists"] and not fake_metrics["parse_error"] and isinstance(fake_metrics["data"], dict):
-        failed = fake_metrics["data"].get("num_failed_predictions")
-        missing = fake_metrics["data"].get("num_missing_labels")
-        if isinstance(failed, int) and failed > 0:
-            issues.append(f"- `{fake_metrics['relative_path']}`: num_failed_predictions={failed}")
-        if isinstance(missing, int) and missing > 0:
-            issues.append(f"- `{fake_metrics['relative_path']}`: num_missing_labels={missing}")
+        for count_key in ["num_failed_predictions", "num_missing_labels"]:
+            value = fake_metrics["data"].get(count_key)
+            if isinstance(value, int) and value > 0:
+                issues.append(f"- `{fake_metrics['relative_path']}`: {count_key}={value}")
+        num_predictions = fake_metrics["data"].get("num_predictions")
+        num_joined = fake_metrics["data"].get("num_joined")
+        if isinstance(num_predictions, int) and isinstance(num_joined, int) and num_joined != num_predictions:
+            issues.append(f"- `{fake_metrics['relative_path']}`: num_joined={num_joined} differs from num_predictions={num_predictions}")
+        failure_report = fake_metrics["data"].get("failure_report")
+        if isinstance(failure_report, dict):
+            for key, label in [
+                ("missing_predictions", "missing_predictions"),
+                ("extra_predictions", "extra_predictions"),
+                ("failed_predictions", "failed_predictions"),
+            ]:
+                values = failure_report.get(key)
+                if isinstance(values, list) and values:
+                    issues.append(f"- `{fake_metrics['data'].get('failure_report_path')}`: {label}={len(values)}")
+
+    pytest_record = artifacts["pytest_server"]
+    if pytest_record["exists"] and not pytest_record["parse_error"] and isinstance(pytest_record["data"], dict):
+        if pytest_record["data"].get("passed") is not True:
+            issues.append(f"- `{pytest_record['relative_path']}`: pytest did not pass")
 
     return issues or ["- none recorded from the provided artifacts."]
 
@@ -361,16 +584,37 @@ def _known_issues(artifacts: dict[str, dict[str, Any]], references: dict[str, di
 def _gate_status(artifacts: dict[str, dict[str, Any]], references: dict[str, dict[str, Any]]) -> dict[str, str]:
     blockers = _known_issues(artifacts, references)
     has_blocker = blockers != ["- none recorded from the provided artifacts."]
-    label = "PASS" if not has_blocker else "NOT MET"
     if has_blocker:
         return {
-            "label": label,
-            "reason": "存在 missing/parse_error/非零失败计数/泄漏未通过等问题；见第8节。",
+            "label": "NOT MET",
+            "reason": "存在 missing/parse_error/非零失败计数/泄漏未通过/pytest未通过/evaluation未闭合等问题；见第9节。",
         }
     return {
-        "label": label,
-        "reason": "所有指定输入文件存在且可解析，audit 关键失败计数为0，leakage ok=true，FakeExpert smoke metrics 无失败或缺失标签。",
+        "label": "PASS",
+        "reason": "指定与实际布局中的输入文件均存在且可解析，audit关键失败计数为0，support与leakage闭合，FakeExpert evaluation无缺失或额外预测，服务器pytest通过。",
     }
+
+
+def _relative_to_project(path: Path, project_root: Path, stage1_dir: Path) -> Path:
+    for root in [project_root, stage1_dir]:
+        try:
+            return path.relative_to(root)
+        except ValueError:
+            pass
+    return path
+
+
+def _dataset_title(dataset: str) -> str:
+    return "MVTec" if dataset == "mvtec" else "VisA"
+
+
+def _int_value(value: Any) -> int:
+    return value if isinstance(value, int) else 0
+
+
+def _last_nonempty_line(text: str) -> str:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return lines[-1] if lines else ""
 
 
 def _value(value: Any) -> str:
