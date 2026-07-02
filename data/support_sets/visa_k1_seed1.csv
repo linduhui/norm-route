@@ -1,0 +1,13 @@
+support_set_id,dataset,category,k_shot,seed,support_rank,image_id,image_path
+visa_candle_k1_seed1,visa,candle,1,1,1,visa_152597ec0f97b80e,/data/gauss/ldh/myDatasets/VisA/candle/Data/Images/Normal/0662.JPG
+visa_capsules_k1_seed1,visa,capsules,1,1,1,visa_f93fb9d484c39a14,/data/gauss/ldh/myDatasets/VisA/capsules/Data/Images/Normal/424.JPG
+visa_cashew_k1_seed1,visa,cashew,1,1,1,visa_cf2b385dfac3e430,/data/gauss/ldh/myDatasets/VisA/cashew/Data/Images/Normal/180.JPG
+visa_chewinggum_k1_seed1,visa,chewinggum,1,1,1,visa_0af6e74543a12240,/data/gauss/ldh/myDatasets/VisA/chewinggum/Data/Images/Normal/175.JPG
+visa_fryum_k1_seed1,visa,fryum,1,1,1,visa_f0d3d4f0c60a838b,/data/gauss/ldh/myDatasets/VisA/fryum/Data/Images/Normal/070.JPG
+visa_macaroni1_k1_seed1,visa,macaroni1,1,1,1,visa_a9661cb95aa6f1f6,/data/gauss/ldh/myDatasets/VisA/macaroni1/Data/Images/Normal/0843.JPG
+visa_macaroni2_k1_seed1,visa,macaroni2,1,1,1,visa_4fb23722cdc27bad,/data/gauss/ldh/myDatasets/VisA/macaroni2/Data/Images/Normal/0808.JPG
+visa_pcb1_k1_seed1,visa,pcb1,1,1,1,visa_324f397a1077a099,/data/gauss/ldh/myDatasets/VisA/pcb1/Data/Images/Normal/0273.JPG
+visa_pcb2_k1_seed1,visa,pcb2,1,1,1,visa_1a311c9359b71b76,/data/gauss/ldh/myDatasets/VisA/pcb2/Data/Images/Normal/0090.JPG
+visa_pcb3_k1_seed1,visa,pcb3,1,1,1,visa_a4a6251c38795fb2,/data/gauss/ldh/myDatasets/VisA/pcb3/Data/Images/Normal/0591.JPG
+visa_pcb4_k1_seed1,visa,pcb4,1,1,1,visa_43678c3f3f6c2be1,/data/gauss/ldh/myDatasets/VisA/pcb4/Data/Images/Normal/0603.JPG
+visa_pipe_fryum_k1_seed1,visa,pipe_fryum,1,1,1,visa_e31e9f4401e90efd,/data/gauss/ldh/myDatasets/VisA/pipe_fryum/Data/Images/Normal/259.JPG

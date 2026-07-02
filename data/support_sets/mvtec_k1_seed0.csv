@@ -1,0 +1,16 @@
+support_set_id,dataset,category,k_shot,seed,support_rank,image_id,image_path
+mvtec_bottle_k1_seed0,mvtec,bottle,1,0,1,mvtec_8b7593ba611edf82,/data/gauss/ldh/myDatasets/mvtec_anomaly_detection/bottle/train/good/097.png
+mvtec_cable_k1_seed0,mvtec,cable,1,0,1,mvtec_854190d210add545,/data/gauss/ldh/myDatasets/mvtec_anomaly_detection/cable/train/good/148.png
+mvtec_capsule_k1_seed0,mvtec,capsule,1,0,1,mvtec_3f5aa3d6446e3c1c,/data/gauss/ldh/myDatasets/mvtec_anomaly_detection/capsule/train/good/013.png
+mvtec_carpet_k1_seed0,mvtec,carpet,1,0,1,mvtec_0b1f2d65cdc4e5b2,/data/gauss/ldh/myDatasets/mvtec_anomaly_detection/carpet/train/good/188.png
+mvtec_grid_k1_seed0,mvtec,grid,1,0,1,mvtec_b65af41b3d7dcf0a,/data/gauss/ldh/myDatasets/mvtec_anomaly_detection/grid/train/good/160.png
+mvtec_hazelnut_k1_seed0,mvtec,hazelnut,1,0,1,mvtec_dd74b4f182be391a,/data/gauss/ldh/myDatasets/mvtec_anomaly_detection/hazelnut/train/good/250.png
+mvtec_leather_k1_seed0,mvtec,leather,1,0,1,mvtec_4ea89721b99bb0b2,/data/gauss/ldh/myDatasets/mvtec_anomaly_detection/leather/train/good/181.png
+mvtec_metal_nut_k1_seed0,mvtec,metal_nut,1,0,1,mvtec_eb7458b0a7d3a53e,/data/gauss/ldh/myDatasets/mvtec_anomaly_detection/metal_nut/train/good/144.png
+mvtec_pill_k1_seed0,mvtec,pill,1,0,1,mvtec_046e3415e9899028,/data/gauss/ldh/myDatasets/mvtec_anomaly_detection/pill/train/good/041.png
+mvtec_screw_k1_seed0,mvtec,screw,1,0,1,mvtec_bad3544bb8815ec8,/data/gauss/ldh/myDatasets/mvtec_anomaly_detection/screw/train/good/076.png
+mvtec_tile_k1_seed0,mvtec,tile,1,0,1,mvtec_3602dc7a6c4c64da,/data/gauss/ldh/myDatasets/mvtec_anomaly_detection/tile/train/good/146.png
+mvtec_toothbrush_k1_seed0,mvtec,toothbrush,1,0,1,mvtec_27d5a5067c03798b,/data/gauss/ldh/myDatasets/mvtec_anomaly_detection/toothbrush/train/good/016.png
+mvtec_transistor_k1_seed0,mvtec,transistor,1,0,1,mvtec_ed378a3ef30016ed,/data/gauss/ldh/myDatasets/mvtec_anomaly_detection/transistor/train/good/081.png
+mvtec_wood_k1_seed0,mvtec,wood,1,0,1,mvtec_4b02552d4bd0bdee,/data/gauss/ldh/myDatasets/mvtec_anomaly_detection/wood/train/good/076.png
+mvtec_zipper_k1_seed0,mvtec,zipper,1,0,1,mvtec_1c422d259b6a7eac,/data/gauss/ldh/myDatasets/mvtec_anomaly_detection/zipper/train/good/084.png
