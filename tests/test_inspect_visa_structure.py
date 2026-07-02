@@ -1,10 +1,11 @@
 import json
 from pathlib import Path
+import sys
 
 import pytest
 from PIL import Image
 
-from scripts.inspect_visa_structure import inspect_visa_structure, write_report
+from scripts.inspect_visa_structure import inspect_visa_structure, main, write_report
 
 
 def _png(path: Path, size: tuple[int, int] = (8, 6)) -> None:
@@ -80,6 +81,21 @@ def test_inspect_visa_structure_rejects_missing_root(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError, match="VisA root does not exist"):
         inspect_visa_structure(missing_root)
+
+
+def test_cli_reports_missing_root_without_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    missing_root = tmp_path / "missing"
+    monkeypatch.setattr(sys, "argv", ["inspect_visa_structure.py", "--visa-root", str(missing_root)])
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    captured = capsys.readouterr()
+    assert exc_info.value.code == 2
+    assert "VisA root does not exist" in captured.err
+    assert "Traceback" not in captured.err
 
 
 def test_write_report_writes_json_without_touching_visa_root(tmp_path: Path) -> None:

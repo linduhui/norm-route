@@ -52,6 +52,22 @@ NON_CATEGORY_NAMES = TRAIN_NAMES | TEST_NAMES | GOOD_NAMES | BAD_NAMES | MASK_KE
 
 
 def parse_args() -> argparse.Namespace:
+    return build_parser().parse_args()
+
+
+def main() -> None:
+    parser = build_parser()
+    args = parser.parse_args()
+    try:
+        report = inspect_visa_structure(Path(args.visa_root))
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        parser.error(str(exc))
+    output_path = Path(args.output_json)
+    write_report(output_path, report)
+    print(f"Wrote {output_path}")
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--visa-root", required=True, help="Path to the raw VisA dataset root.")
     parser.add_argument(
@@ -59,15 +75,7 @@ def parse_args() -> argparse.Namespace:
         default=str(DEFAULT_OUTPUT_PATH),
         help="Path for the read-only structure report JSON.",
     )
-    return parser.parse_args()
-
-
-def main() -> None:
-    args = parse_args()
-    report = inspect_visa_structure(Path(args.visa_root))
-    output_path = Path(args.output_json)
-    write_report(output_path, report)
-    print(f"Wrote {output_path}")
+    return parser
 
 
 def inspect_visa_structure(visa_root: Path) -> dict[str, Any]:
