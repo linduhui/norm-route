@@ -14,15 +14,24 @@ if str(ROOT) not in sys.path:
 
 from src.data.manifest import write_manifest_outputs
 from src.data.mvtec import build_mvtec_manifest
+from src.data.visa import build_visa_manifest
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", choices=["mvtec"], default="mvtec")
-    parser.add_argument("--mvtec-root", required=True, help="Path to the raw MVTec AD root.")
-    parser.add_argument("--categories", nargs="*", help="Optional MVTec categories to scan.")
+    parser.add_argument("--dataset", choices=["mvtec", "visa"], default="mvtec")
+    parser.add_argument("--mvtec-root", help="Path to the raw MVTec AD root.")
+    parser.add_argument("--visa-root", help="Path to the raw VisA root.")
+    parser.add_argument(
+        "--visa-split-csv",
+        help="Optional VisA split CSV path. Defaults to split_csv/1cls.csv when present.",
+    )
+    parser.add_argument("--categories", nargs="*", help="Optional categories to scan.")
     parser.add_argument("--manifest-dir", default="data/manifests")
-    parser.add_argument("--audit-path", default="outputs/stage1_gate/mvtec_audit.json")
+    parser.add_argument(
+        "--audit-path",
+        help="Path for the audit JSON. Defaults to outputs/stage1_gate/<dataset>_audit.json.",
+    )
     parser.add_argument(
         "--path-style",
         choices=["absolute", "relative"],
@@ -34,14 +43,29 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if args.dataset != "mvtec":
+    if args.audit_path is None:
+        args.audit_path = f"outputs/stage1_gate/{args.dataset}_audit.json"
+
+    if args.dataset == "mvtec":
+        if args.mvtec_root is None:
+            raise ValueError("--mvtec-root is required when --dataset mvtec")
+        rows = build_mvtec_manifest(
+            args.mvtec_root,
+            path_style=args.path_style,
+            categories=args.categories,
+        )
+    elif args.dataset == "visa":
+        if args.visa_root is None:
+            raise ValueError("--visa-root is required when --dataset visa")
+        rows = build_visa_manifest(
+            args.visa_root,
+            path_style=args.path_style,
+            categories=args.categories,
+            split_csv_path=args.visa_split_csv,
+        )
+    else:
         raise ValueError(f"Unsupported dataset: {args.dataset}")
 
-    rows = build_mvtec_manifest(
-        args.mvtec_root,
-        path_style=args.path_style,
-        categories=args.categories,
-    )
     rows.audit["run"] = _run_metadata(args, rows.audit)
     agent_path, evaluator_path, audit_path = write_manifest_outputs(
         agent_rows=rows.agent_input,
@@ -49,6 +73,7 @@ def main() -> None:
         audit=rows.audit,
         manifest_dir=Path(args.manifest_dir),
         audit_path=Path(args.audit_path),
+        dataset=args.dataset,
     )
     print(f"Wrote {agent_path}")
     print(f"Wrote {evaluator_path}")
@@ -61,6 +86,8 @@ def _run_metadata(args: argparse.Namespace, audit: dict) -> dict:
         "config": {
             "dataset": args.dataset,
             "mvtec_root": args.mvtec_root,
+            "visa_root": args.visa_root,
+            "visa_split_csv": args.visa_split_csv,
             "categories": args.categories,
             "manifest_dir": args.manifest_dir,
             "audit_path": args.audit_path,

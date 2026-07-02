@@ -20,11 +20,12 @@ def write_manifest_outputs(
     audit: dict[str, Any],
     manifest_dir: str | Path,
     audit_path: str | Path,
+    dataset: str = "mvtec",
 ) -> tuple[Path, Path, Path]:
     manifest_dir = Path(manifest_dir)
     audit_path = Path(audit_path)
-    agent_path = manifest_dir / "mvtec_agent_input.csv"
-    evaluator_path = manifest_dir / "mvtec_evaluator.csv"
+    agent_path = manifest_dir / f"{dataset}_agent_input.csv"
+    evaluator_path = manifest_dir / f"{dataset}_evaluator.csv"
 
     _validate_agent_rows(agent_rows)
     manifest_dir.mkdir(parents=True, exist_ok=True)
