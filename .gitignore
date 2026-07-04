@@ -20,3 +20,20 @@ outputs/full_runs/
 *.ckpt
 *.safetensors
 *.onnx
+
+# Stage2 large files
+datasets/
+weights/
+outputs/
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.npy
+*.npz
+
+# Keep protocol files
+!data/support_sets/
+!data/support_sets/*.csv
+!data/manifests/
+!data/manifests/*.csv
