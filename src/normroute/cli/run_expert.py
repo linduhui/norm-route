@@ -21,6 +21,7 @@ from src.normroute.experts.base import (
     ExpertPrediction,
     validate_expert_input_fields,
 )
+from src.normroute.experts.patchcore import PatchCoreExpert
 
 
 AGENT_COLUMNS = ["image_id", "dataset", "category", "split", "image_path"]
@@ -38,12 +39,15 @@ SUPPORT_COLUMNS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a Stage 2 visual expert.")
-    parser.add_argument("--expert", default="dummy", choices=["dummy"])
+    parser.add_argument("--expert", default="dummy", choices=["dummy", "patchcore"])
     parser.add_argument("--agent-input-csv", required=True)
     parser.add_argument("--support-set-csv", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--dataset")
     parser.add_argument("--category")
+    parser.add_argument("--k-shot", type=int)
+    parser.add_argument("--seed", type=int)
+    parser.add_argument("--support-set-id")
     parser.add_argument("--budget", type=int, default=1)
     parser.add_argument("--limit", type=int)
     return parser.parse_args()
@@ -51,7 +55,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    expert = _build_expert(args.expert)
+    expert = _build_expert(args.expert, output_dir=args.output_dir)
     agent_rows = _read_csv(args.agent_input_csv, AGENT_COLUMNS, "agent input CSV")
     support_rows = _read_csv(args.support_set_csv, SUPPORT_COLUMNS, "support set CSV")
     inputs = _build_inputs(
@@ -59,16 +63,23 @@ def main() -> None:
         support_rows=support_rows,
         dataset=args.dataset,
         category=args.category,
+        k_shot=args.k_shot,
+        seed=args.seed,
+        support_set_id=args.support_set_id,
         budget=args.budget,
         limit=args.limit,
     )
 
-    expert.fit(inputs)
     predictions: list[ExpertPrediction] = []
-    for expert_input in inputs:
-        try:
-            predictions.append(expert.predict(expert_input))
-        except Exception as exc:  # pragma: no cover - real experts will use this path.
+    try:
+        expert.fit(inputs)
+        for expert_input in inputs:
+            try:
+                predictions.append(expert.predict(expert_input))
+            except Exception as exc:  # pragma: no cover - real experts will use this path.
+                predictions.append(_failed_prediction(expert.name, expert_input, exc))
+    except Exception as exc:
+        for expert_input in inputs:
             predictions.append(_failed_prediction(expert.name, expert_input, exc))
 
     predictions_path, metrics_path, failures_path = export_run_outputs(
@@ -80,9 +91,11 @@ def main() -> None:
     print(f"Wrote {failures_path}")
 
 
-def _build_expert(name: str) -> Expert:
+def _build_expert(name: str, *, output_dir: str) -> Expert:
     if name == "dummy":
         return DummyExpert()
+    if name == "patchcore":
+        return PatchCoreExpert(output_dir=output_dir)
     raise ValueError(f"Unsupported expert: {name}")
 
 
@@ -104,12 +117,21 @@ def _build_inputs(
     support_rows: list[dict[str, str]],
     dataset: str | None,
     category: str | None,
+    k_shot: int | None,
+    seed: int | None,
+    support_set_id: str | None,
     budget: int,
     limit: int | None,
 ) -> list[ExpertInput]:
     support_by_category: dict[tuple[str, str], list[dict[str, str]]] = {}
     for row in support_rows:
         validate_expert_input_fields(row, context="support set row")
+        if k_shot is not None and int(row["k_shot"]) != k_shot:
+            continue
+        if seed is not None and int(row["seed"]) != seed:
+            continue
+        if support_set_id and row["support_set_id"] != support_set_id:
+            continue
         key = (row["dataset"], row["category"])
         support_by_category.setdefault(key, []).append(row)
 
@@ -182,4 +204,3 @@ def _failed_prediction(expert_name: str, expert_input: ExpertInput, exc: Excepti
 
 if __name__ == "__main__":
     main()
-

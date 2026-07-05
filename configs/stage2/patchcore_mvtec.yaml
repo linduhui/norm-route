@@ -1,0 +1,20 @@
+expert: patchcore
+dataset: mvtec
+category: bottle
+k_shot: 1
+seed: 0
+support_set_id: mvtec_bottle_k1_seed0
+budget: 1
+
+inputs:
+  agent_input_csv: data/manifests/mvtec_agent_input.csv
+  support_set_csv: data/support_sets/mvtec_k1_seed0.csv
+
+outputs:
+  output_dir: outputs/stage2/patchcore_mvtec
+
+patchcore:
+  image_size: 64
+  patch_size: 16
+  stride: 8
+  anomaly_threshold: 0.5

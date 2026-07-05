@@ -8,6 +8,7 @@ from src.normroute.experts.base import (
     FORBIDDEN_EXPERT_INPUT_FIELDS,
     validate_expert_input_fields,
 )
+from src.normroute.experts.patchcore import PatchCoreConfig, PatchCoreExpert
 
 __all__ = [
     "DummyExpert",
@@ -15,6 +16,7 @@ __all__ = [
     "ExpertInput",
     "ExpertPrediction",
     "FORBIDDEN_EXPERT_INPUT_FIELDS",
+    "PatchCoreConfig",
+    "PatchCoreExpert",
     "validate_expert_input_fields",
 ]
-
