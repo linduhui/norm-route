@@ -55,12 +55,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    expert = _build_expert(args.expert, output_dir=args.output_dir)
-    agent_rows = _read_csv(args.agent_input_csv, AGENT_COLUMNS, "agent input CSV")
-    support_rows = _read_csv(args.support_set_csv, SUPPORT_COLUMNS, "support set CSV")
-    inputs = _build_inputs(
-        agent_rows=agent_rows,
-        support_rows=support_rows,
+    predictions_path, metrics_path, failures_path = run_expert(
+        expert_name=args.expert,
+        agent_input_csv=args.agent_input_csv,
+        support_set_csv=args.support_set_csv,
+        output_dir=args.output_dir,
         dataset=args.dataset,
         category=args.category,
         k_shot=args.k_shot,
@@ -68,6 +67,41 @@ def main() -> None:
         support_set_id=args.support_set_id,
         budget=args.budget,
         limit=args.limit,
+    )
+    print(f"Wrote {predictions_path}")
+    print(f"Wrote {metrics_path}")
+    print(f"Wrote {failures_path}")
+
+
+def run_expert(
+    *,
+    expert_name: str,
+    agent_input_csv: str | Path,
+    support_set_csv: str | Path,
+    output_dir: str | Path,
+    dataset: str | None = None,
+    category: str | None = None,
+    k_shot: int | None = None,
+    seed: int | None = None,
+    support_set_id: str | None = None,
+    budget: int = 1,
+    limit: int | None = None,
+) -> tuple[Path, Path, Path]:
+    """Run one Stage 2 expert combination and write standard output artifacts."""
+
+    expert = _build_expert(expert_name, output_dir=str(output_dir))
+    agent_rows = _read_csv(agent_input_csv, AGENT_COLUMNS, "agent input CSV")
+    support_rows = _read_csv(support_set_csv, SUPPORT_COLUMNS, "support set CSV")
+    inputs = _build_inputs(
+        agent_rows=agent_rows,
+        support_rows=support_rows,
+        dataset=dataset,
+        category=category,
+        k_shot=k_shot,
+        seed=seed,
+        support_set_id=support_set_id,
+        budget=budget,
+        limit=limit,
     )
 
     predictions: list[ExpertPrediction] = []
@@ -82,13 +116,10 @@ def main() -> None:
         for expert_input in inputs:
             predictions.append(_failed_prediction(expert.name, expert_input, exc))
 
-    predictions_path, metrics_path, failures_path = export_run_outputs(
-        output_dir=args.output_dir,
+    return export_run_outputs(
+        output_dir=output_dir,
         predictions=predictions,
     )
-    print(f"Wrote {predictions_path}")
-    print(f"Wrote {metrics_path}")
-    print(f"Wrote {failures_path}")
 
 
 def _build_expert(name: str, *, output_dir: str) -> Expert:
