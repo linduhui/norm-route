@@ -24,7 +24,12 @@ UNRESOLVED_SUPPORT_SET_ID = "support_set_id_unresolved"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a Stage 2 expert grid.")
-    parser.add_argument("--experts", nargs="+", required=True, choices=["dummy", "patchcore", "winclip"])
+    parser.add_argument(
+        "--experts",
+        nargs="+",
+        required=True,
+        choices=["dummy", "patchcore", "winclip", "anomalydino"],
+    )
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--categories", nargs="+", required=True)
     parser.add_argument("--k-shots", nargs="+", required=True, type=int)

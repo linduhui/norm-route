@@ -69,6 +69,7 @@ class ExpertPrediction:
     final_score: float
     final_decision: str
     anomaly_map_path: str
+    pixel_score_path: str
     actions: str
     tool_calls: int
     runtime_ms: float
@@ -123,10 +124,10 @@ class DummyExpert:
             final_score=score,
             final_decision="normal" if score < 0.5 else "anomaly",
             anomaly_map_path="",
+            pixel_score_path="",
             actions="DUMMY_EXPERT",
             tool_calls=1,
             runtime_ms=runtime_ms,
             status="ok",
             error_message="",
         )
-

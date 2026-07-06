@@ -99,6 +99,7 @@ class PatchCoreExpert(Expert):
             if final_score >= self.config.anomaly_threshold
             else "normal",
             anomaly_map_path=str(anomaly_map_path),
+            pixel_score_path="",
             actions=(
                 "PATCHCORE_NN "
                 f"image_size={self.config.image_size} "

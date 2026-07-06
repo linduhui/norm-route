@@ -21,6 +21,7 @@ PREDICTION_COLUMNS = [
     "final_score",
     "final_decision",
     "anomaly_map_path",
+    "pixel_score_path",
     "actions",
     "tool_calls",
     "runtime_ms",
@@ -100,4 +101,3 @@ def _failures(rows: list[dict[str, Any]]) -> dict[str, Any]:
             if row["status"] != "ok"
         ]
     }
-

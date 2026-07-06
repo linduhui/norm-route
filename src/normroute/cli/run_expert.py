@@ -21,6 +21,7 @@ from src.normroute.experts.base import (
     ExpertPrediction,
     validate_expert_input_fields,
 )
+from src.normroute.experts.anomalydino import AnomalyDINOConfig, AnomalyDINOExpert
 from src.normroute.experts.patchcore import PatchCoreExpert
 from src.normroute.experts.winclip import WinCLIPConfig, WinCLIPExpert
 
@@ -40,7 +41,11 @@ SUPPORT_COLUMNS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a Stage 2 visual expert.")
-    parser.add_argument("--expert", default="dummy", choices=["dummy", "patchcore", "winclip"])
+    parser.add_argument(
+        "--expert",
+        default="dummy",
+        choices=["dummy", "patchcore", "winclip", "anomalydino"],
+    )
     parser.add_argument("--config")
     parser.add_argument("--agent-input-csv", required=True)
     parser.add_argument("--support-set-csv", required=True)
@@ -137,6 +142,13 @@ def _build_expert(name: str, *, output_dir: str, config_path: str | Path | None 
         return WinCLIPExpert(
             output_dir=output_dir,
             config=WinCLIPConfig.from_yaml(resolved_config),
+        )
+    if name == "anomalydino":
+        default_config = PROJECT_ROOT / "configs" / "stage2" / "anomalydino_mvtec.yaml"
+        resolved_config = Path(config_path) if config_path else default_config
+        return AnomalyDINOExpert(
+            output_dir=output_dir,
+            config=AnomalyDINOConfig.from_yaml(resolved_config),
         )
     raise ValueError(f"Unsupported expert: {name}")
 
@@ -236,6 +248,7 @@ def _failed_prediction(expert_name: str, expert_input: ExpertInput, exc: Excepti
         final_score=0.0,
         final_decision="abstain",
         anomaly_map_path="",
+        pixel_score_path="",
         actions="",
         tool_calls=0,
         runtime_ms=0.0,
