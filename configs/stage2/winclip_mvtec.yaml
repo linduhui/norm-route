@@ -1,0 +1,43 @@
+expert: winclip
+dataset: mvtec
+category: bottle
+k_shot: 1
+seed: 0
+support_set_id: mvtec_bottle_k1_seed0
+budget: 1
+
+inputs:
+  agent_input_csv: data/manifests/mvtec_agent_input.csv
+  support_set_csv: data/support_sets/mvtec_k1_seed0.csv
+
+outputs:
+  output_dir: outputs/stage2/winclip_mvtec
+
+winclip:
+  image_size: 64
+  grid_size: 8
+  anomaly_threshold: 0.5
+  class_name_map:
+    bottle: bottle
+    cable: cable
+    capsule: capsule
+    carpet: carpet
+    grid: grid
+    hazelnut: hazelnut
+    leather: leather
+    metal_nut: metal nut
+    pill: pill
+    screw: screw
+    tile: tile
+    toothbrush: toothbrush
+    transistor: transistor
+    wood: wood
+    zipper: zipper
+  normal_prompt_templates:
+    - "a photo of a normal {class_name}"
+    - "a photo of an intact {class_name}"
+    - "a close-up photo of a good {class_name}"
+  anomaly_prompt_templates:
+    - "a photo of an anomalous {class_name}"
+    - "a photo of a damaged {class_name}"
+    - "a close-up photo of a defective {class_name}"

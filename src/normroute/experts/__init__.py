@@ -9,6 +9,7 @@ from src.normroute.experts.base import (
     validate_expert_input_fields,
 )
 from src.normroute.experts.patchcore import PatchCoreConfig, PatchCoreExpert
+from src.normroute.experts.winclip import WinCLIPConfig, WinCLIPExpert
 
 __all__ = [
     "DummyExpert",
@@ -18,5 +19,7 @@ __all__ = [
     "FORBIDDEN_EXPERT_INPUT_FIELDS",
     "PatchCoreConfig",
     "PatchCoreExpert",
+    "WinCLIPConfig",
+    "WinCLIPExpert",
     "validate_expert_input_fields",
 ]

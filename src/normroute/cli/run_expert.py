@@ -22,6 +22,7 @@ from src.normroute.experts.base import (
     validate_expert_input_fields,
 )
 from src.normroute.experts.patchcore import PatchCoreExpert
+from src.normroute.experts.winclip import WinCLIPConfig, WinCLIPExpert
 
 
 AGENT_COLUMNS = ["image_id", "dataset", "category", "split", "image_path"]
@@ -39,7 +40,8 @@ SUPPORT_COLUMNS = [
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a Stage 2 visual expert.")
-    parser.add_argument("--expert", default="dummy", choices=["dummy", "patchcore"])
+    parser.add_argument("--expert", default="dummy", choices=["dummy", "patchcore", "winclip"])
+    parser.add_argument("--config")
     parser.add_argument("--agent-input-csv", required=True)
     parser.add_argument("--support-set-csv", required=True)
     parser.add_argument("--output-dir", required=True)
@@ -57,6 +59,7 @@ def main() -> None:
     args = parse_args()
     predictions_path, metrics_path, failures_path = run_expert(
         expert_name=args.expert,
+        config_path=args.config,
         agent_input_csv=args.agent_input_csv,
         support_set_csv=args.support_set_csv,
         output_dir=args.output_dir,
@@ -79,6 +82,7 @@ def run_expert(
     agent_input_csv: str | Path,
     support_set_csv: str | Path,
     output_dir: str | Path,
+    config_path: str | Path | None = None,
     dataset: str | None = None,
     category: str | None = None,
     k_shot: int | None = None,
@@ -89,7 +93,7 @@ def run_expert(
 ) -> tuple[Path, Path, Path]:
     """Run one Stage 2 expert combination and write standard output artifacts."""
 
-    expert = _build_expert(expert_name, output_dir=str(output_dir))
+    expert = _build_expert(expert_name, output_dir=str(output_dir), config_path=config_path)
     agent_rows = _read_csv(agent_input_csv, AGENT_COLUMNS, "agent input CSV")
     support_rows = _read_csv(support_set_csv, SUPPORT_COLUMNS, "support set CSV")
     inputs = _build_inputs(
@@ -122,11 +126,18 @@ def run_expert(
     )
 
 
-def _build_expert(name: str, *, output_dir: str) -> Expert:
+def _build_expert(name: str, *, output_dir: str, config_path: str | Path | None = None) -> Expert:
     if name == "dummy":
         return DummyExpert()
     if name == "patchcore":
         return PatchCoreExpert(output_dir=output_dir)
+    if name == "winclip":
+        default_config = PROJECT_ROOT / "configs" / "stage2" / "winclip_mvtec.yaml"
+        resolved_config = Path(config_path) if config_path else default_config
+        return WinCLIPExpert(
+            output_dir=output_dir,
+            config=WinCLIPConfig.from_yaml(resolved_config),
+        )
     raise ValueError(f"Unsupported expert: {name}")
 
 
