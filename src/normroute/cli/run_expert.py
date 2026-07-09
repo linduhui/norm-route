@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import platform
 from pathlib import Path
+import subprocess
 import sys
 from typing import Any
 
@@ -128,6 +130,20 @@ def run_expert(
     return export_run_outputs(
         output_dir=output_dir,
         predictions=predictions,
+        run_metadata=_run_metadata(
+            expert_name=expert.name,
+            config_path=config_path,
+            agent_input_csv=agent_input_csv,
+            support_set_csv=support_set_csv,
+            output_dir=output_dir,
+            dataset=dataset,
+            category=category,
+            k_shot=k_shot,
+            seed=seed,
+            support_set_id=support_set_id,
+            budget=budget,
+            limit=limit,
+        ),
     )
 
 
@@ -255,6 +271,58 @@ def _failed_prediction(expert_name: str, expert_input: ExpertInput, exc: Excepti
         status="error",
         error_message=str(exc),
     )
+
+
+def _run_metadata(
+    *,
+    expert_name: str,
+    config_path: str | Path | None,
+    agent_input_csv: str | Path,
+    support_set_csv: str | Path,
+    output_dir: str | Path,
+    dataset: str | None,
+    category: str | None,
+    k_shot: int | None,
+    seed: int | None,
+    support_set_id: str | None,
+    budget: int,
+    limit: int | None,
+) -> dict[str, Any]:
+    return {
+        "stage": "stage2",
+        "expert_name": expert_name,
+        "config_path": str(config_path or ""),
+        "agent_input_csv": str(agent_input_csv),
+        "support_set_csv": str(support_set_csv),
+        "output_dir": str(output_dir),
+        "dataset": dataset or "",
+        "category": category or "",
+        "k_shot": k_shot,
+        "seed": seed,
+        "support_set_id": support_set_id or "",
+        "budget": budget,
+        "limit": limit,
+        "git_commit": _git_commit(),
+        "environment": {
+            "python_executable": sys.executable,
+            "python_version": sys.version,
+            "platform": platform.platform(),
+        },
+    }
+
+
+def _git_commit() -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=PROJECT_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        return ""
+    return completed.stdout.strip()
 
 
 if __name__ == "__main__":

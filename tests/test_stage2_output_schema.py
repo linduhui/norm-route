@@ -93,6 +93,7 @@ def test_dummy_expert_cli_writes_stage2_output_schema(tmp_path: Path) -> None:
 
     assert completed.returncode == 0, completed.stderr
     assert (output_dir / "anomaly_maps").is_dir()
+    assert (output_dir / "run_metadata.json").is_file()
 
     with (output_dir / "predictions.csv").open("r", newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -112,6 +113,11 @@ def test_dummy_expert_cli_writes_stage2_output_schema(tmp_path: Path) -> None:
 
     failures = json.loads((output_dir / "failures.json").read_text(encoding="utf-8"))
     assert failures == {"failed_predictions": []}
+
+    metadata = json.loads((output_dir / "run_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["stage"] == "stage2"
+    assert metadata["expert_name"] == "dummy"
+    assert metadata["support_set_csv"] == str(support)
 
 
 def test_expert_input_rejects_evaluator_only_fields() -> None:

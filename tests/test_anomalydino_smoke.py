@@ -135,6 +135,7 @@ def test_anomalydino_cli_writes_required_outputs_without_ground_truth(tmp_path: 
     assert completed.returncode == 0, completed.stderr
     assert (output_dir / "metrics.json").is_file()
     assert (output_dir / "failures.json").is_file()
+    assert (output_dir / "run_metadata.json").is_file()
 
     with (output_dir / "predictions.csv").open("r", newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -160,6 +161,9 @@ def test_anomalydino_cli_writes_required_outputs_without_ground_truth(tmp_path: 
 
     failures = json.loads((output_dir / "failures.json").read_text(encoding="utf-8"))
     assert failures == {"failed_predictions": []}
+
+    metadata = json.loads((output_dir / "run_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["expert_name"] == "anomalydino"
 
 
 def test_run_grid_invokes_anomalydino_expert(tmp_path: Path) -> None:
@@ -236,3 +240,4 @@ def test_run_grid_invokes_anomalydino_expert(tmp_path: Path) -> None:
     assert (combo_dir / "predictions.csv").is_file()
     assert (combo_dir / "metrics.json").is_file()
     assert (combo_dir / "failures.json").is_file()
+    assert (combo_dir / "run_metadata.json").is_file()

@@ -159,3 +159,4 @@ def test_grid_writes_combination_output_dir(tmp_path: Path) -> None:
     assert (combo_dir / "predictions.csv").is_file()
     assert (combo_dir / "metrics.json").is_file()
     assert (combo_dir / "failures.json").is_file()
+    assert (combo_dir / "run_metadata.json").is_file()

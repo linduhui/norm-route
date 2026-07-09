@@ -21,6 +21,15 @@ REQUIRED_RUN_FILES = (
 FORBIDDEN_PREDICTION_COLUMNS = {"label", "mask_path", "defect_type", "anomaly_type"}
 EVALUATOR_COLUMNS = ("image_id", "label", "mask_path")
 KEY_COLUMNS = ("image_id", "dataset", "category", "support_set_id", "k_shot", "seed")
+REQUIRED_STAGE3_PREDICTION_COLUMNS = (
+    *KEY_COLUMNS,
+    "expert_name",
+    "final_score",
+    "final_decision",
+    "anomaly_map_path",
+    "status",
+    "error_message",
+)
 LONG_COLUMNS = (
     *KEY_COLUMNS,
     "expert_name",
@@ -131,7 +140,9 @@ def validate_prediction_csv(path: str | Path) -> list[str]:
                 errors.append(
                     f"{predictions_path} contains forbidden prediction columns: {forbidden}"
                 )
-            missing = [column for column in PREDICTION_COLUMNS if column not in fieldnames]
+            missing = [
+                column for column in REQUIRED_STAGE3_PREDICTION_COLUMNS if column not in fieldnames
+            ]
             if missing:
                 errors.append(f"{predictions_path} is missing prediction columns: {missing}")
     except Exception as exc:
@@ -170,7 +181,7 @@ def build_routing_matrices(
                     "status": row["status"],
                     "error_message": row["error_message"],
                     "anomaly_map_path": row["anomaly_map_path"],
-                    "pixel_score_path": row["pixel_score_path"],
+                    "pixel_score_path": row.get("pixel_score_path", ""),
                     "label": evaluator["label"],
                     "mask_path": evaluator["mask_path"],
                     "run_dir": str(run_dir),
@@ -294,4 +305,3 @@ def normalize_expert_name(expert_name: str) -> str:
     """Normalize display names such as AnomalyDINO into stable column keys."""
 
     return re.sub(r"[^a-z0-9]+", "", expert_name.lower())
-

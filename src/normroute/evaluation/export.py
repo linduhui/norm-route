@@ -45,8 +45,9 @@ def export_run_outputs(
     *,
     output_dir: str | Path,
     predictions: list[ExpertPrediction],
+    run_metadata: dict[str, Any] | None = None,
 ) -> tuple[Path, Path, Path]:
-    """Write predictions.csv, metrics.json, and failures.json for a Stage 2 run."""
+    """Write standard Stage 2 artifacts for one expert run."""
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -56,6 +57,7 @@ def export_run_outputs(
     predictions_path = output_path / "predictions.csv"
     metrics_path = output_path / "metrics.json"
     failures_path = output_path / "failures.json"
+    metadata_path = output_path / "run_metadata.json"
 
     _write_csv(predictions_path, PREDICTION_COLUMNS, prediction_rows)
     metrics_path.write_text(
@@ -64,6 +66,10 @@ def export_run_outputs(
     )
     failures_path.write_text(
         json.dumps(_failures(prediction_rows), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    metadata_path.write_text(
+        json.dumps(run_metadata or {}, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 
