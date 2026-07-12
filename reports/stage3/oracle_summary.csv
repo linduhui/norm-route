@@ -1,0 +1,4 @@
+evaluator_only,method,selection_metric,selected_expert,num_runs,num_samples,image_auroc_mean,image_ap_mean,image_f1_max_mean
+True,best_single,image_auroc,anomalydino,300,34500,0.633134223429,0.829201902248,0.858313507959
+True,run_level_oracle,image_auroc,,300,34500,0.680012634623,0.852689859532,0.862407506377
+True,sample_level_oracle,image_auroc,,300,34500,0.988257130085,0.995662036191,0.988787435008
