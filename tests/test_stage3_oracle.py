@@ -1,4 +1,5 @@
 import csv
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -255,7 +256,7 @@ def test_compute_oracle_outputs_and_selection_counts_are_evaluator_only(tmp_path
     assert counts[("bottle", "1", "patchcore")] == 1
     assert counts[("bottle", "1", "winclip")] == 1
 
-    output_dir = tmp_path / "outputs" / "stage3" / "evaluator_only"
+    output_dir = tmp_path / "outputs" / "stage3" / "oracle"
     summary_path, counts_path = write_oracle_outputs(result, output_dir)
     written_summary = _read_csv(summary_path)
     assert {row["evaluator_only"] for row in written_summary} == {"True"}
@@ -263,7 +264,9 @@ def test_compute_oracle_outputs_and_selection_counts_are_evaluator_only(tmp_path
     assert not (output_dir / "sample_level_oracle_predictions.csv").exists()
     assert {row["evaluator_only"] for row in _read_csv(counts_path)} == {"True"}
 
-    with pytest.raises(RoutingMatrixError, match="evaluator_only"):
+    with pytest.raises(RoutingMatrixError, match="oracle"):
+        write_oracle_outputs(result, tmp_path / "outputs" / "stage3" / "analysis")
+    with pytest.raises(RoutingMatrixError, match="agent_visible"):
         write_oracle_outputs(result, tmp_path / "outputs" / "stage3" / "agent_visible")
 
 
@@ -293,21 +296,30 @@ def test_compute_complementarity_summary_contains_required_analyses(tmp_path: Pa
 
 def test_compute_oracle_cli_writes_expected_files(tmp_path: Path) -> None:
     routing_path, quality_path = _write_fixture(tmp_path)
-    output_dir = tmp_path / "outputs" / "stage3" / "evaluator_only"
+    output_dir = tmp_path / "outputs" / "stage3" / "oracle"
+    report_dir = tmp_path / "reports" / "stage3"
 
     completed = subprocess.run(
         [
             sys.executable,
             "-m",
-            "src.normroute.cli.compute_oracle",
-            "--routing-matrix-long",
+            "normroute.cli.compute_oracle",
+            "--routing-matrix",
             str(routing_path),
-            "--expert-quality-by-run",
+            "--expert-quality",
             str(quality_path),
+            "--metric",
+            "image_auroc",
             "--output-dir",
             str(output_dir),
+            "--report-dir",
+            str(report_dir),
         ],
         cwd=ROOT,
+        env={
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join([str(ROOT), str(ROOT / "src")]),
+        },
         check=False,
         capture_output=True,
         text=True,
@@ -317,6 +329,9 @@ def test_compute_oracle_cli_writes_expected_files(tmp_path: Path) -> None:
     assert (output_dir / "oracle_summary.csv").is_file()
     assert (output_dir / "oracle_selection_counts.csv").is_file()
     assert (output_dir / "complementarity_summary.csv").is_file()
+    assert (report_dir / "oracle_summary.csv").is_file()
+    assert (report_dir / "oracle_selection_counts.csv").is_file()
+    assert (report_dir / "complementarity_summary.csv").is_file()
     assert {row["evaluator_only"] for row in _read_csv(output_dir / "complementarity_summary.csv")} == {
         "True"
     }

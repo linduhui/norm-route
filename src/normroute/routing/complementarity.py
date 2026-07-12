@@ -5,8 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable
 
-from src.normroute.routing.join_predictions import ensure_evaluator_only_output
-from src.normroute.routing.oracle import OracleError, read_expert_quality_by_run
+from src.normroute.routing.oracle import OracleError, ensure_oracle_output, read_expert_quality_by_run
 from src.normroute.routing.quality_metrics import read_routing_matrix_long, write_csv
 
 
@@ -63,7 +62,7 @@ def write_complementarity_summary(
     """Write evaluator-only complementarity_summary.csv."""
 
     output_path = Path(output_dir)
-    ensure_evaluator_only_output(output_path)
+    ensure_oracle_output(output_path)
     output_path.mkdir(parents=True, exist_ok=True)
     summary_path = output_path / "complementarity_summary.csv"
     write_csv(summary_path, list(COMPLEMENTARITY_COLUMNS), rows)

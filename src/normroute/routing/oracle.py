@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from src.normroute.routing.join_predictions import ensure_evaluator_only_output
+from src.normroute.routing.join_predictions import RoutingMatrixError
 from src.normroute.routing.quality_metrics import (
     GROUP_COLUMNS,
     QualityMetricError,
@@ -131,13 +131,27 @@ def write_oracle_outputs(result: OracleResult, output_dir: str | Path) -> tuple[
     """Write evaluator-only Oracle summary and selection count artifacts."""
 
     output_path = Path(output_dir)
-    ensure_evaluator_only_output(output_path)
+    ensure_oracle_output(output_path)
     output_path.mkdir(parents=True, exist_ok=True)
     summary_path = output_path / "oracle_summary.csv"
     counts_path = output_path / "oracle_selection_counts.csv"
     write_csv(summary_path, list(ORACLE_SUMMARY_COLUMNS), result.summary_rows)
     write_csv(counts_path, list(ORACLE_SELECTION_COUNT_COLUMNS), result.selection_count_rows)
     return summary_path, counts_path
+
+
+def ensure_oracle_output(output_dir: Path) -> None:
+    """Keep evaluator-only Oracle aggregates out of agent-visible directories."""
+
+    parts = {part.lower() for part in output_dir.parts}
+    leaf = output_dir.name.lower()
+    if "agent_visible" in parts:
+        raise RoutingMatrixError("Oracle outputs are evaluator-only and cannot be agent_visible.")
+    if "evaluator_only" not in parts and not leaf.startswith("oracle"):
+        raise RoutingMatrixError(
+            "Oracle outputs are evaluator-only aggregates and must be written under an "
+            "evaluator_only directory or an oracle* directory."
+        )
 
 
 def _best_single_rows(
@@ -320,6 +334,7 @@ __all__ = [
     "OracleError",
     "OracleResult",
     "compute_oracle_outputs",
+    "ensure_oracle_output",
     "read_expert_quality_by_run",
     "write_oracle_outputs",
 ]

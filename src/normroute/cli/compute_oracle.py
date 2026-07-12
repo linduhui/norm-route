@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import shutil
 import sys
 
 
@@ -30,15 +31,22 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--routing-matrix-long",
+        "--routing-matrix",
+        dest="routing_matrix_long",
         default="outputs/stage3/evaluator_only/routing_matrix_long.csv",
     )
     parser.add_argument(
         "--expert-quality-by-run",
+        "--expert-quality",
+        dest="expert_quality_by_run",
         default="outputs/stage3/quality/expert_quality_by_run.csv",
     )
-    parser.add_argument("--output-dir", default="outputs/stage3/evaluator_only")
+    parser.add_argument("--output-dir", default="outputs/stage3/oracle")
+    parser.add_argument("--report-dir", default="reports/stage3")
     parser.add_argument(
         "--selection-metric",
+        "--metric",
+        dest="selection_metric",
         choices=("image_auroc", "image_ap"),
         default="image_auroc",
     )
@@ -66,6 +74,10 @@ def main() -> None:
             complementarity_rows,
             output_dir=args.output_dir,
         )
+        report_paths = _copy_reports(
+            (oracle_summary_path, oracle_counts_path, complementarity_path),
+            args.report_dir,
+        )
     except (OracleError, QualityMetricError, RoutingMatrixError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
@@ -73,6 +85,21 @@ def main() -> None:
     print(f"Wrote {oracle_summary_path}")
     print(f"Wrote {oracle_counts_path}")
     print(f"Wrote {complementarity_path}")
+    for report_path in report_paths:
+        print(f"Wrote {report_path}")
+
+
+def _copy_reports(paths: tuple[Path, ...], report_dir: str | Path | None) -> tuple[Path, ...]:
+    if report_dir is None:
+        return ()
+    report_path = Path(report_dir)
+    report_path.mkdir(parents=True, exist_ok=True)
+    copied: list[Path] = []
+    for path in paths:
+        destination = report_path / path.name
+        shutil.copyfile(path, destination)
+        copied.append(destination)
+    return tuple(copied)
 
 
 if __name__ == "__main__":
