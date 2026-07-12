@@ -21,6 +21,7 @@ EXPECTED_EXPERTS = ("patchcore", "winclip", "anomalydino")
 WIDE_SCORE_COLUMNS = ("patchcore_score", "winclip_score", "anomalydino_score")
 DEFAULT_AGENT_VISIBLE_FILES = ("agent_routing_tasks.jsonl", "expert_cards.json")
 DEFAULT_ORACLE_FILES = ("oracle_summary.csv", "oracle_selection_counts.csv")
+DEFAULT_REPORT_FILES = ("stage3_report.md", "routing_matrix_schema.md")
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,9 +33,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--agent-visible-dir",
-        default="outputs/stage3/agent_visible",
+        default=None,
     )
     parser.add_argument("--oracle-dir", default="outputs/stage3/oracle")
+    parser.add_argument("--report-dir", default=None)
     return parser.parse_args()
 
 
@@ -43,8 +45,13 @@ def main() -> None:
     errors = validate_stage3_outputs(
         stage3_root=Path(args.stage3_root),
         evaluator_only_dir=Path(args.evaluator_only_dir),
-        agent_visible_dir=Path(args.agent_visible_dir),
+        agent_visible_dir=(
+            Path(args.agent_visible_dir)
+            if args.agent_visible_dir is not None
+            else default_agent_visible_dir(Path(args.stage3_root))
+        ),
         oracle_dir=Path(args.oracle_dir),
+        report_dir=Path(args.report_dir) if args.report_dir is not None else None,
     )
     if errors:
         for error in errors:
@@ -59,6 +66,7 @@ def validate_stage3_outputs(
     evaluator_only_dir: Path,
     agent_visible_dir: Path,
     oracle_dir: Path,
+    report_dir: Path | None = None,
 ) -> list[str]:
     """Return all Stage 3 validation errors."""
 
@@ -67,9 +75,20 @@ def validate_stage3_outputs(
     errors.extend(validate_agent_visible_files(agent_visible_dir))
     errors.extend(validate_oracle_files(oracle_dir))
     errors.extend(validate_routing_matrix_alignment(evaluator_only_dir))
+    if report_dir is not None:
+        errors.extend(validate_report_files(report_dir))
     if stage3_root.exists():
         errors.extend(validate_no_agent_visible_leakage_outside_evaluator_only(stage3_root))
     return errors
+
+
+def default_agent_visible_dir(stage3_root: Path) -> Path:
+    """Prefer the Day 14 routing_matrix path when it exists, otherwise use legacy default."""
+
+    routing_matrix_dir = stage3_root / "routing_matrix"
+    if routing_matrix_dir.exists():
+        return routing_matrix_dir
+    return stage3_root / "agent_visible"
 
 
 def validate_evaluator_only_files(evaluator_only_dir: Path) -> list[str]:
@@ -104,6 +123,14 @@ def validate_oracle_files(oracle_dir: Path) -> list[str]:
             continue
         errors.extend(validate_csv_evaluator_only_flag(path))
     return errors
+
+
+def validate_report_files(report_dir: Path) -> list[str]:
+    return [
+        f"Missing Stage 3 report file: {report_dir / file_name}"
+        for file_name in DEFAULT_REPORT_FILES
+        if not (report_dir / file_name).is_file()
+    ]
 
 
 def validate_routing_matrix_alignment(evaluator_only_dir: Path) -> list[str]:

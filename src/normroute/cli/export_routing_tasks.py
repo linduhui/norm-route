@@ -44,6 +44,11 @@ def parse_args() -> argparse.Namespace:
         default="outputs/stage3/evaluator_only/routing_matrix_wide.csv",
     )
     parser.add_argument("--output-dir", default="outputs/stage3/agent_visible")
+    parser.add_argument(
+        "--dataset",
+        default=None,
+        help="Optional dataset filter, e.g. mvtec.",
+    )
     return parser.parse_args()
 
 
@@ -53,6 +58,7 @@ def main() -> None:
         task_path, card_path = export_routing_tasks(
             routing_matrix_wide=args.routing_matrix_wide,
             output_dir=args.output_dir,
+            dataset=args.dataset,
         )
     except RoutingTaskExportError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -66,12 +72,15 @@ def export_routing_tasks(
     *,
     routing_matrix_wide: str | Path,
     output_dir: str | Path,
+    dataset: str | None = None,
 ) -> tuple[Path, Path]:
     """Write agent-visible routing tasks and expert cards."""
 
     output_path = Path(output_dir)
     ensure_agent_visible_output(output_path)
     rows = read_routing_matrix_wide(routing_matrix_wide)
+    if dataset is not None:
+        rows = filter_rows_by_dataset(rows, dataset)
     tasks = [routing_task_from_wide_row(row) for row in rows]
 
     output_path.mkdir(parents=True, exist_ok=True)
@@ -110,6 +119,19 @@ def read_routing_matrix_wide(path: str | Path) -> list[dict[str, str]]:
                 )
             rows.append(clean)
     return rows
+
+
+def filter_rows_by_dataset(rows: list[dict[str, str]], dataset: str) -> list[dict[str, str]]:
+    """Return rows for one dataset and fail loudly if the filter matches nothing."""
+
+    requested = dataset.strip()
+    filtered = [row for row in rows if row.get("dataset") == requested]
+    if not filtered:
+        available = sorted({row.get("dataset", "") for row in rows})
+        raise RoutingTaskExportError(
+            f"No rows found for dataset={requested!r}; available datasets: {available}"
+        )
+    return filtered
 
 
 def routing_task_from_wide_row(row: dict[str, str]) -> dict[str, Any]:

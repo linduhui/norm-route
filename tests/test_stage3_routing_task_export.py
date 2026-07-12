@@ -177,7 +177,7 @@ def test_validate_stage3_outputs_rejects_unaligned_expert_samples(tmp_path: Path
 
 def test_export_routing_tasks_cli_writes_expected_files(tmp_path: Path) -> None:
     wide_path, _, _, _ = _write_stage3_fixture(tmp_path)
-    output_dir = tmp_path / "exports" / "agent_visible"
+    output_dir = tmp_path / "outputs" / "stage3" / "routing_matrix"
 
     completed = subprocess.run(
         [
@@ -188,6 +188,8 @@ def test_export_routing_tasks_cli_writes_expected_files(tmp_path: Path) -> None:
             str(wide_path),
             "--output-dir",
             str(output_dir),
+            "--dataset",
+            "mvtec",
         ],
         cwd=ROOT,
         check=False,
@@ -198,3 +200,36 @@ def test_export_routing_tasks_cli_writes_expected_files(tmp_path: Path) -> None:
     assert completed.returncode == 0, completed.stderr
     assert (output_dir / "agent_routing_tasks.jsonl").is_file()
     assert (output_dir / "expert_cards.json").is_file()
+
+
+def test_validate_stage3_outputs_cli_supports_day14_paths(tmp_path: Path) -> None:
+    wide_path, evaluator_only_dir, agent_visible_dir, oracle_dir = _write_stage3_fixture(tmp_path)
+    routing_matrix_dir = tmp_path / "outputs" / "stage3" / "routing_matrix"
+    export_routing_tasks(routing_matrix_wide=wide_path, output_dir=routing_matrix_dir, dataset="mvtec")
+    report_dir = tmp_path / "reports" / "stage3"
+    report_dir.mkdir(parents=True)
+    (report_dir / "stage3_report.md").write_text("# Stage 3\n", encoding="utf-8")
+    (report_dir / "routing_matrix_schema.md").write_text("# Schema\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "src.normroute.cli.validate_stage3_outputs",
+            "--stage3-root",
+            str(tmp_path / "outputs" / "stage3"),
+            "--evaluator-only-dir",
+            str(evaluator_only_dir),
+            "--oracle-dir",
+            str(oracle_dir),
+            "--report-dir",
+            str(report_dir),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert agent_visible_dir.is_dir()
