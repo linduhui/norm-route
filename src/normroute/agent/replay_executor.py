@@ -596,6 +596,7 @@ def _run_metadata(
 ) -> dict[str, Any]:
     config = {
         "policy_name": policy.name,
+        "policy_configuration": policy.configuration(),
         "fold": fold,
         "split": split,
         "tool_budget_per_task": tool_budget,

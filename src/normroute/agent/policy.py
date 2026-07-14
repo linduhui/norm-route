@@ -1,16 +1,16 @@
-"""Abstract policy interface and the Stage 4 smoke policy."""
+"""Abstract policy interface and the original fixed Stage 4 baseline."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import json
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, Union
 
 from .protocol import AgentTask, RouteDecision
 
 
-TrainRecord = AgentTask | Mapping[str, Any]
+TrainRecord = Union[AgentTask, Mapping[str, Any]]
 
 
 class Policy(ABC):
@@ -35,9 +35,14 @@ class Policy(ABC):
     def load(cls, path: str | Path) -> "Policy":
         """Load policy state from a path written by :meth:`save`."""
 
+    def configuration(self) -> dict[str, Any]:
+        """Return JSON-safe policy configuration for run provenance."""
+
+        return {}
+
 
 class AlwaysAnomalyDINOPolicy(Policy):
-    """Deterministic smoke policy that always selects AnomalyDINO."""
+    """Deterministic fixed policy that always selects AnomalyDINO."""
 
     name = "always_anomalydino"
     state_version = "stage4.policy.always_anomalydino.v1"
@@ -59,7 +64,7 @@ class AlwaysAnomalyDINOPolicy(Policy):
             support_set_id=task.support_set_id,
             policy_name=self.name,
             selected_expert="AnomalyDINO",
-            decision_reason="Smoke policy always selects AnomalyDINO.",
+            decision_reason="Fixed policy always selects AnomalyDINO.",
             estimated_cost_ms=0.0,
             tool_calls=1,
         )

@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 from types import MappingProxyType
 
 from .policy import AlwaysAnomalyDINOPolicy, Policy
+from src.normroute.policies.fixed import (
+    AlwaysPatchCorePolicy,
+    AlwaysWinCLIPPolicy,
+    FastestExpertPolicy,
+    RandomSeededPolicy,
+)
 
 
-PolicyFactory = Callable[[], Policy]
+PolicyFactory = Callable[..., Policy]
 _POLICY_REGISTRY: dict[str, PolicyFactory] = {}
 POLICY_REGISTRY = MappingProxyType(_POLICY_REGISTRY)
 """Read-only view of the registered policy factories."""
@@ -23,7 +30,7 @@ def register_policy(name: str, factory: PolicyFactory) -> None:
     _POLICY_REGISTRY[key] = factory
 
 
-def create_policy(name: str) -> Policy:
+def create_policy(name: str, **configuration: Any) -> Policy:
     """Construct a fresh policy instance by registered name."""
 
     key = _normalize_name(name)
@@ -33,7 +40,15 @@ def create_policy(name: str) -> Policy:
         raise KeyError(
             f"Unknown policy {name!r}; available policies: {list_policies()}"
         ) from exc
-    policy = factory()
+    try:
+        policy = factory(**configuration)
+    except TypeError as exc:
+        if configuration:
+            raise ValueError(
+                f"Policy {key!r} does not accept configuration keys "
+                f"{sorted(configuration)!r}: {exc}"
+            ) from exc
+        raise
     if policy.name != key:
         raise ValueError(
             f"Policy factory registered as {key!r} produced name={policy.name!r}"
@@ -41,10 +56,10 @@ def create_policy(name: str) -> Policy:
     return policy
 
 
-def get_policy(name: str) -> Policy:
+def get_policy(name: str, **configuration: Any) -> Policy:
     """Compatibility alias for :func:`create_policy`."""
 
-    return create_policy(name)
+    return create_policy(name, **configuration)
 
 
 def list_policies() -> tuple[str, ...]:
@@ -58,3 +73,7 @@ def _normalize_name(name: str) -> str:
 
 
 register_policy(AlwaysAnomalyDINOPolicy.name, AlwaysAnomalyDINOPolicy)
+register_policy(AlwaysPatchCorePolicy.name, AlwaysPatchCorePolicy)
+register_policy(AlwaysWinCLIPPolicy.name, AlwaysWinCLIPPolicy)
+register_policy(RandomSeededPolicy.name, RandomSeededPolicy)
+register_policy(FastestExpertPolicy.name, FastestExpertPolicy)

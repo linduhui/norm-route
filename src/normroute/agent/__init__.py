@@ -16,6 +16,13 @@ from .protocol import (
     validate_route_decision,
 )
 from .policy import AlwaysAnomalyDinoPolicy, AlwaysAnomalyDINOPolicy, Policy
+from src.normroute.policies.fixed import (
+    AlwaysPatchCorePolicy,
+    AlwaysWinCLIPPolicy,
+    FastestExpertPolicy,
+    FixedExpertPolicy,
+    RandomSeededPolicy,
+)
 from .policy_registry import (
     POLICY_REGISTRY,
     create_policy,
@@ -28,12 +35,17 @@ __all__ = [
     "AgentTask",
     "AlwaysAnomalyDinoPolicy",
     "AlwaysAnomalyDINOPolicy",
+    "AlwaysPatchCorePolicy",
+    "AlwaysWinCLIPPolicy",
     "CANDIDATE_EXPERTS",
     "FORBIDDEN_PRE_ROUTE_FIELDS",
     "FORBIDDEN_ROUTE_DECISION_FIELDS",
     "POLICY_FEATURE_ALLOWLIST",
     "POLICY_REGISTRY",
     "Policy",
+    "FastestExpertPolicy",
+    "FixedExpertPolicy",
+    "RandomSeededPolicy",
     "PROVENANCE_FIELDS",
     "ROUTE_DECISION_FIELDS",
     "STAGE4_TASK_PROTOCOL_VERSION",
