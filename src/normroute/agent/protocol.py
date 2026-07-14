@@ -7,7 +7,8 @@ folds, and recording outputs, but they are not policy features.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+import math
 from typing import Any, Mapping, Sequence
 
 
@@ -24,10 +25,13 @@ CANDIDATE_EXPERTS = ("PatchCore", "WinCLIP", "AnomalyDINO")
 FORBIDDEN_PRE_ROUTE_FIELDS = frozenset(
     {
         "label",
+        "mask",
         "mask_path",
         "defect_type",
         "anomaly_type",
+        "oracle_answer",
         "oracle_best_expert",
+        "ground_truth",
         "patchcore_score",
         "winclip_score",
         "anomalydino_score",
@@ -49,14 +53,45 @@ PRE_ROUTE_TASK_FIELDS = frozenset(
     }
 )
 
+ROUTE_DECISION_FIELDS = frozenset(
+    {
+        "task_id",
+        "dataset",
+        "category",
+        "k_shot",
+        "seed",
+        "support_set_id",
+        "policy_name",
+        "selected_expert",
+        "decision_reason",
+        "estimated_cost_ms",
+        "tool_calls",
+        "fold",
+        "split",
+    }
+)
+
+FORBIDDEN_ROUTE_DECISION_FIELDS = frozenset(
+    {
+        "label",
+        "mask",
+        "mask_path",
+        "defect_type",
+        "anomaly_type",
+        "oracle_answer",
+        "oracle_best_expert",
+        "ground_truth",
+    }
+)
+
 
 class Stage4ProtocolError(ValueError):
     """Raised when a Stage 4 task violates the frozen protocol."""
 
 
 @dataclass(frozen=True)
-class PreRouteTask:
-    """A validated Stage 4 task before an expert has been selected or run."""
+class AgentTask:
+    """Unified, leakage-safe Stage 4 task presented to a routing policy."""
 
     task_id: str
     sample_id: str
@@ -67,6 +102,9 @@ class PreRouteTask:
     support_set_id: str
     candidate_experts: tuple[str, ...] = CANDIDATE_EXPERTS
     protocol_version: str = STAGE4_TASK_PROTOCOL_VERSION
+
+    def __post_init__(self) -> None:
+        validate_pre_route_task(self.to_dict())
 
     @property
     def policy_features(self) -> dict[str, str | int]:
@@ -95,7 +133,7 @@ class PreRouteTask:
         return payload
 
     @classmethod
-    def from_mapping(cls, payload: Mapping[str, Any]) -> "PreRouteTask":
+    def from_mapping(cls, payload: Mapping[str, Any]) -> "AgentTask":
         """Create a typed task from an already serialized protocol mapping."""
 
         validate_pre_route_task(payload)
@@ -109,6 +147,90 @@ class PreRouteTask:
             support_set_id=payload["support_set_id"],
             candidate_experts=tuple(payload["candidate_experts"]),
             protocol_version=payload["protocol_version"],
+        )
+
+
+@dataclass(frozen=True)
+class PreRouteTask(AgentTask):
+    """Backward-compatible name for an AgentTask before expert selection."""
+
+
+@dataclass(frozen=True)
+class RouteDecision:
+    """One and only one expert selection for a Stage 4 Agent task.
+
+    The structure intentionally has no evaluator-only label, mask, defect type,
+    ground truth, or Oracle-answer field.
+    """
+
+    task_id: str
+    dataset: str
+    category: str
+    k_shot: int
+    seed: int
+    support_set_id: str
+    policy_name: str
+    selected_expert: str
+    decision_reason: str
+    estimated_cost_ms: float
+    tool_calls: int
+    fold: str = ""
+    split: str = ""
+
+    def __post_init__(self) -> None:
+        validate_route_decision(asdict(self))
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        validate_route_decision(payload)
+        return payload
+
+
+def validate_route_decision(
+    payload: Mapping[str, Any], *, context: str = "route decision"
+) -> None:
+    """Validate the exact no-leakage, single-expert decision schema."""
+
+    if not isinstance(payload, Mapping):
+        raise Stage4ProtocolError(f"{context} must be a mapping")
+    forbidden = sorted(FORBIDDEN_ROUTE_DECISION_FIELDS.intersection(payload))
+    if forbidden:
+        raise Stage4ProtocolError(f"{context} contains forbidden fields: {forbidden}")
+    missing = sorted(ROUTE_DECISION_FIELDS - set(payload))
+    extra = sorted(set(payload) - ROUTE_DECISION_FIELDS)
+    if missing or extra:
+        raise Stage4ProtocolError(
+            f"{context} has invalid schema; missing={missing}, extra={extra}"
+        )
+
+    for field in (
+        "task_id",
+        "dataset",
+        "category",
+        "support_set_id",
+        "policy_name",
+        "selected_expert",
+        "decision_reason",
+    ):
+        _require_nonempty_string(payload[field], field=field, context=context)
+    for field in ("fold", "split"):
+        if not isinstance(payload[field], str):
+            raise Stage4ProtocolError(f"{context} field {field!r} must be a string")
+    _require_integer(payload["k_shot"], field="k_shot", context=context, minimum=1)
+    _require_integer(payload["seed"], field="seed", context=context, minimum=0)
+    _require_integer(payload["tool_calls"], field="tool_calls", context=context, minimum=0)
+    estimated_cost = payload["estimated_cost_ms"]
+    if isinstance(estimated_cost, bool) or not isinstance(estimated_cost, (int, float)):
+        raise Stage4ProtocolError(
+            f"{context} field 'estimated_cost_ms' must be a non-negative number"
+        )
+    if not math.isfinite(float(estimated_cost)) or estimated_cost < 0:
+        raise Stage4ProtocolError(
+            f"{context} field 'estimated_cost_ms' must be a non-negative number"
+        )
+    if payload["selected_expert"] not in CANDIDATE_EXPERTS:
+        raise Stage4ProtocolError(
+            f"{context} selected_expert must be exactly one of {list(CANDIDATE_EXPERTS)!r}"
         )
 
 
