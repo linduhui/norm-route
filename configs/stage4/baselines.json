@@ -1,0 +1,21 @@
+{
+  "folds": [
+    "fold0",
+    "fold1",
+    "fold2",
+    "fold3",
+    "fold4"
+  ],
+  "max_estimated_cost_ms": null,
+  "policies": [
+    "always_anomalydino",
+    "always_patchcore",
+    "always_winclip",
+    "random_seeded",
+    "fastest_expert"
+  ],
+  "protocol_version": "stage4.baseline_grid.v1",
+  "seed": 0,
+  "split": "test",
+  "tool_budget": 1
+}
