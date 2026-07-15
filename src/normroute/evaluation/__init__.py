@@ -13,4 +13,4 @@ __all__ = [
     "PREDICTION_COLUMNS",
     "export_run_outputs",
 ]
-
+"""Evaluation utilities; evaluator-only modules are imported explicitly."""

@@ -1,8 +1,9 @@
 # Stage 4 Agent Task and Seed-CV Protocol
 
-This document freezes the Stage 4 pre-route task boundary and the five-fold
-seed split. Stage 4 in this change builds protocol artifacts only; it does not
-implement an Agent, a policy, data loading, or an expert algorithm.
+This document freezes the Stage 4 pre-route task boundary, five-fold seed
+split, and replay-only Agent interface. The replay executor selects exactly
+one expert per task and reads that expert's immutable Stage 2
+`predictions.csv`; it does not run or modify an expert algorithm.
 
 ## Inputs and outputs
 
@@ -138,5 +139,15 @@ Run from the repository root:
 ```powershell
 python -m src.normroute.cli.build_stage4_tasks
 python -m src.normroute.cli.build_stage4_splits
+python -m src.normroute.cli.run_agent --policy always_anomalydino --fold fold0 --split test
 pytest
 ```
+
+## Replay outputs
+
+Each replay run writes `route_decisions.csv`, `selected_predictions.csv`,
+`failures.json`, `run_metadata.json`, and `budget_summary.json`. The metadata
+captures the complete replay config, seeds, git commit, environment, and input
+hashes. Missing Stage 2 runs, missing/duplicate prediction matches, failed
+predictions, mixed-expert Stage 2 run files, and budget violations are recorded
+as explicit task failures; none are silently skipped.
