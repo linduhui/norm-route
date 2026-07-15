@@ -148,6 +148,7 @@ def test_replay_writes_required_outputs_from_selected_stage2_run(tmp_path: Path)
     assert selected[0]["image_id"] == task.sample_id
     assert selected[0]["stage2_run_dir"] == str(run_dir)
     assert selected[0]["expert_name"] == "anomalydino"
+    assert selected[0]["runtime_source"] == "estimated_runtime"
 
     failures = json.loads(result.failures_path.read_text(encoding="utf-8"))
     assert failures["failed_tasks"] == []

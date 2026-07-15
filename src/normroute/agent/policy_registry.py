@@ -13,6 +13,7 @@ from src.normroute.policies.fixed import (
     FastestExpertPolicy,
     RandomSeededPolicy,
 )
+from src.normroute.policies.cost_aware import CostAwarePolicy
 from src.normroute.policies.rule_based import (
     CategoryPriorPolicy,
     CategoryShotPriorPolicy,
@@ -83,3 +84,4 @@ register_policy(RandomSeededPolicy.name, RandomSeededPolicy)
 register_policy(FastestExpertPolicy.name, FastestExpertPolicy)
 register_policy(CategoryPriorPolicy.name, CategoryPriorPolicy)
 register_policy(CategoryShotPriorPolicy.name, CategoryShotPriorPolicy)
+register_policy(CostAwarePolicy.name, CostAwarePolicy)

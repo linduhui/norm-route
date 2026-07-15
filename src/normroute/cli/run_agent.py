@@ -49,7 +49,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--policy-artifact",
-        help="Fold-specific policy_artifact.json for category rule policies.",
+        help="Final fold-specific policy_artifact.json for calibrated policies.",
     )
     return parser.parse_args(argv)
 
@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> None:
             policy_kwargs["seed"] = args.seed
         if args.policy == "fastest_expert" and args.expert_cost_card:
             policy_kwargs["cost_card"] = args.expert_cost_card
-        if args.policy in {"category_prior", "category_shot_prior"}:
+        if args.policy in {"category_prior", "category_shot_prior", "cost_aware"}:
             if not args.policy_artifact:
                 raise ValueError(
                     f"Policy {args.policy!r} requires --policy-artifact"

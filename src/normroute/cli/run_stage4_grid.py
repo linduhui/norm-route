@@ -103,6 +103,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--stage2-root", default="outputs/stage2")
     parser.add_argument("--output-root", default="outputs/stage4/runs")
     parser.add_argument("--expert-cost-card")
+    parser.add_argument(
+        "--policy-artifact-root",
+        default="outputs/stage4/policies",
+        help="Root containing <policy>/<fold>/policy_artifact.json.",
+    )
     return parser.parse_args(argv)
 
 
@@ -129,6 +134,7 @@ def main(argv: list[str] | None = None) -> None:
             stage2_root=args.stage2_root,
             output_root=args.output_root,
             expert_cost_card=args.expert_cost_card,
+            policy_artifact_root=args.policy_artifact_root,
             config_path=args.config,
         )
     except (Stage4GridError, ReplayExecutionError, TaskBuildError, ValueError) as exc:
@@ -173,6 +179,7 @@ def run_stage4_grid(
     output_root: str | Path,
     expert_cost_card: str | Path | Mapping[str, Any] | None = None,
     config_path: str | Path | None = None,
+    policy_artifact_root: str | Path = "outputs/stage4/policies",
 ) -> dict[str, Any]:
     """Run every requested policy/fold pair and record every failure explicitly."""
 
@@ -193,6 +200,8 @@ def run_stage4_grid(
                 policy_name,
                 seed=config.seed,
                 expert_cost_card=expert_cost_card,
+                fold=fold,
+                policy_artifact_root=policy_artifact_root,
             )
             train_records: Sequence[Mapping[str, Any]] | None = None
             if policy_name == "fastest_expert" and expert_cost_card is None:
@@ -305,6 +314,7 @@ def run_stage4_grid(
             "expert_cost_card_path": (
                 str(expert_cost_card) if isinstance(expert_cost_card, (str, Path)) else ""
             ),
+            "policy_artifact_root": str(policy_artifact_root),
             "num_combinations": len(records),
             "num_failed": len(grid_failures),
             "completed_at_utc": _utc_now(),
@@ -438,11 +448,21 @@ def _create_grid_policy(
     *,
     seed: int,
     expert_cost_card: str | Path | Mapping[str, Any] | None,
+    fold: str,
+    policy_artifact_root: str | Path,
 ) -> Policy:
     if name == "random_seeded":
         return create_policy(name, seed=seed)
     if name == "fastest_expert" and expert_cost_card is not None:
         return create_policy(name, cost_card=expert_cost_card)
+    if name in {"category_prior", "category_shot_prior", "cost_aware"}:
+        artifact = Path(policy_artifact_root) / name / fold / "policy_artifact.json"
+        if not artifact.is_file():
+            raise Stage4GridError(
+                f"Final policy artifact does not exist for policy={name!r}, "
+                f"fold={fold!r}: {artifact}"
+            )
+        return create_policy(name, artifact=artifact)
     return create_policy(name)
 
 

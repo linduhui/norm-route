@@ -19,6 +19,12 @@ import sys
 from typing import Any, Iterable, Mapping, Sequence
 
 from src.normroute.agent.protocol import CANDIDATE_EXPERTS
+from src.normroute.policies.cost_aware import (
+    COST_AWARE_POLICY_NAME,
+    DEFAULT_LAMBDA_GRID,
+    calibrate_cost_aware_artifacts,
+    calibrate_cost_aware_policy as calibrate_one_cost_aware_policy,
+)
 from src.normroute.policies.rule_based import (
     CATEGORY_PRIOR,
     CATEGORY_SHOT_PRIOR,
@@ -126,7 +132,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--policy",
-        choices=RULE_POLICY_NAMES,
+        choices=(*RULE_POLICY_NAMES, COST_AWARE_POLICY_NAME),
         default=CATEGORY_SHOT_PRIOR,
     )
     parser.add_argument(
@@ -148,6 +154,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--lambda-grid",
+        nargs="+",
+        type=float,
+        default=list(DEFAULT_LAMBDA_GRID),
+        help="Cost-aware lambda candidates; selected using validation only.",
+    )
+    parser.add_argument(
+        "--max-runtime-ms",
+        type=float,
+        default=None,
+        help="Optional hard per-task ceiling on train-estimated expert runtime.",
+    )
+    parser.add_argument(
         "--output-root",
         default="outputs/stage4/policies",
     )
@@ -165,6 +184,8 @@ def main(argv: list[str] | None = None) -> None:
             metric=args.metric,
             folds=args.folds,
             runtime_column=args.runtime_column,
+            lambda_grid=args.lambda_grid,
+            max_runtime_ms=args.max_runtime_ms,
         )
     except (OSError, PolicyCalibrationError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -182,9 +203,23 @@ def calibrate_policy_artifacts(
     metric: str = "image_auroc",
     folds: Sequence[str] | None = None,
     runtime_column: str | None = None,
+    lambda_grid: Sequence[float] = DEFAULT_LAMBDA_GRID,
+    max_runtime_ms: float | None = None,
 ) -> list[Path]:
     """Calibrate and write one ``policy_artifact.json`` per requested fold."""
 
+    if policy_name == COST_AWARE_POLICY_NAME:
+        pairs = calibrate_cost_aware_artifacts(
+            expert_quality_by_run=expert_quality_by_run,
+            fold_manifest=fold_manifest,
+            output_root=output_root,
+            metric=metric,
+            folds=folds,
+            runtime_column=runtime_column,
+            lambda_grid=lambda_grid,
+            max_runtime_ms=max_runtime_ms,
+        )
+        return [path for pair in pairs for path in pair]
     _validate_policy_and_metric(policy_name, metric)
     requested_folds = _normalize_requested_folds(folds)
     manifest_folds = read_manifest_folds(fold_manifest, folds=requested_folds)
@@ -219,9 +254,23 @@ def calibrate_policy(
     policy_name: str = CATEGORY_SHOT_PRIOR,
     metric: str = "image_auroc",
     runtime_column: str | None = None,
+    lambda_grid: Sequence[float] = DEFAULT_LAMBDA_GRID,
+    max_runtime_ms: float | None = None,
 ) -> Path:
     """Convenience API for calibrating exactly one fold to an explicit path."""
 
+    if policy_name == COST_AWARE_POLICY_NAME:
+        artifact_path, _ = calibrate_one_cost_aware_policy(
+            expert_quality_by_run=expert_quality_by_run,
+            fold_manifest=fold_manifest,
+            fold=fold,
+            output_path=output_path,
+            metric=metric,
+            runtime_column=runtime_column,
+            lambda_grid=lambda_grid,
+            max_runtime_ms=max_runtime_ms,
+        )
+        return artifact_path
     _validate_policy_and_metric(policy_name, metric)
     manifests = read_manifest_folds(fold_manifest, folds=(fold,))
     rows = read_fold_training_quality(

@@ -63,8 +63,10 @@ SELECTED_PREDICTION_COLUMNS = (
     "policy_name",
     "selected_expert",
     "stage2_run_dir",
+    "runtime_source",
     *PREDICTION_COLUMNS,
 )
+ESTIMATED_RUNTIME_SOURCE = "estimated_runtime"
 ALLOWED_SPLITS = frozenset({"train", "val", "test"})
 
 
@@ -199,6 +201,9 @@ class ReplayExecutor:
                         "policy_name": self.policy.name,
                         "selected_expert": decision.selected_expert,
                         "stage2_run_dir": str(run_dir),
+                        # This is historical Stage 2 runtime reused as a replay
+                        # estimate.  It is not wall-clock time of this replay.
+                        "runtime_source": ESTIMATED_RUNTIME_SOURCE,
                         **{column: prediction.get(column, "") for column in PREDICTION_COLUMNS},
                     }
                 )
@@ -349,6 +354,7 @@ class ReplayExecutor:
         )
         return {
             "protocol_version": REPLAY_PROTOCOL_VERSION,
+            "runtime_source": ESTIMATED_RUNTIME_SOURCE,
             "tool_budget_per_task": self.tool_budget,
             "max_estimated_cost_ms_per_task": self.max_estimated_cost_ms,
             "num_tasks": num_tasks,
@@ -358,6 +364,9 @@ class ReplayExecutor:
             "total_tool_call_budget": total_budget,
             "planned_tool_calls": planned,
             "actual_replayed_tool_calls": actual_tool_calls,
+            "planned_estimated_runtime_ms": sum(
+                float(row["estimated_cost_ms"]) for row in decisions
+            ),
             "planned_budget_remaining": max(total_budget - planned, 0),
             "within_budget": budget_failures == 0,
         }
@@ -549,20 +558,25 @@ def _validate_policy_fold_binding(
             f"Policy artifact is calibrated for fold={artifact_fold!r}, not replay fold={fold!r}"
         )
     artifact_train_seeds = configuration.get("train_seeds")
-    if artifact_train_seeds is None:
-        return
-    manifest_train_seeds = sorted(
-        {
-            task.seed
-            for task in tasks
-            if assignments[task.task_id]["split"] == "train"
-        }
-    )
-    if list(artifact_train_seeds) != manifest_train_seeds:
-        raise ReplayExecutionError(
-            "Policy artifact train_seeds do not match the replay fold manifest; "
-            f"artifact={list(artifact_train_seeds)}, manifest={manifest_train_seeds}"
+    for split, artifact_seeds in (
+        ("train", artifact_train_seeds),
+        ("val", configuration.get("validation_seeds")),
+    ):
+        if artifact_seeds is None:
+            continue
+        manifest_seeds = sorted(
+            {
+                task.seed
+                for task in tasks
+                if assignments[task.task_id]["split"] == split
+            }
         )
+        if list(artifact_seeds) != manifest_seeds:
+            label = "train_seeds" if split == "train" else "validation_seeds"
+            raise ReplayExecutionError(
+                f"Policy artifact {label} do not match the replay fold manifest; "
+                f"artifact={list(artifact_seeds)}, manifest={manifest_seeds}"
+            )
 
 
 def _read_stage2_predictions(path: Path, selected_expert: str) -> list[dict[str, str]]:
@@ -641,6 +655,7 @@ def _run_metadata(
         "max_estimated_cost_ms_per_task": max_estimated_cost_ms,
         "stage2_root": str(stage2_root),
         "output_dir": str(output_dir),
+        "runtime_source": ESTIMATED_RUNTIME_SOURCE,
     }
     seeds = sorted({task.seed for task in tasks})
     return {

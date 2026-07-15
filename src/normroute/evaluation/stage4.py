@@ -145,7 +145,7 @@ def write_stage4_evaluation(
         "selected_predictions": [str(path) for path in selected_paths],
         "evaluator_csv": str(evaluator_csv),
         "f1_source": "saved_final_decision",
-        "runtime_source": "saved_selected_prediction_runtime_ms",
+        "runtime_source": "estimated_runtime",
     }
     _write_json(config_path, config)
     _write_json(
@@ -224,6 +224,8 @@ def _compute_group_metrics(
     else:
         auroc = compute_auroc(labels, scores)
         ap = compute_average_precision(labels, scores)
+    # Replay reuses historical Stage 2 runtime as an estimate; it does not
+    # measure the current replay's wall-clock duration.
     runtime_ms = sum(float(row["runtime_ms"]) for row in rows)
     tool_calls = sum(int(row["tool_calls"]) for row in rows)
     return {
@@ -295,6 +297,11 @@ def _read_selected_predictions(path: str | Path) -> list[dict[str, str]]:
             empty = [column for column in required_values if not clean.get(column)]
             if empty:
                 raise Stage4EvaluationError(f"{source}:{line_number} has empty values: {empty}")
+            runtime_source = clean.get("runtime_source")
+            if runtime_source and runtime_source != "estimated_runtime":
+                raise Stage4EvaluationError(
+                    f"{source}:{line_number} runtime_source must be 'estimated_runtime'"
+                )
             rows.append(clean)
     return rows
 

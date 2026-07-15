@@ -1,5 +1,15 @@
 """Stage 4 leakage-safe routing baselines."""
 
+from .cost_aware import (
+    COST_AWARE_POLICY_NAME,
+    DEFAULT_LAMBDA_GRID,
+    ESTIMATED_RUNTIME,
+    CostAwarePolicy,
+    CostAwarePolicyError,
+    calibrate_cost_aware_artifacts,
+    calibrate_cost_aware_policy,
+    load_cost_aware_artifact,
+)
 from .fixed import (
     AlwaysAnomalyDinoPolicy,
     AlwaysAnomalyDINOPolicy,
@@ -18,6 +28,11 @@ from .rule_based import (
 )
 
 __all__ = [
+    "COST_AWARE_POLICY_NAME",
+    "DEFAULT_LAMBDA_GRID",
+    "ESTIMATED_RUNTIME",
+    "CostAwarePolicy",
+    "CostAwarePolicyError",
     "AlwaysAnomalyDinoPolicy",
     "AlwaysAnomalyDINOPolicy",
     "AlwaysPatchCorePolicy",
@@ -28,6 +43,9 @@ __all__ = [
     "CategoryPriorPolicy",
     "CategoryShotPriorPolicy",
     "RulePolicyArtifactError",
+    "calibrate_cost_aware_artifacts",
+    "calibrate_cost_aware_policy",
+    "load_cost_aware_artifact",
     "load_expert_cost_card",
     "load_rule_policy_artifact",
 ]

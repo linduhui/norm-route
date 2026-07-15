@@ -140,8 +140,10 @@ Run from the repository root:
 python -m src.normroute.cli.build_stage4_tasks
 python -m src.normroute.cli.build_stage4_splits
 python scripts/calibrate_policy.py --policy category_shot_prior
+python scripts/calibrate_policy.py --policy cost_aware --max-runtime-ms 100
 python -m src.normroute.cli.run_agent --policy always_anomalydino --fold fold0 --split test
 python -m src.normroute.cli.run_agent --policy category_shot_prior --policy-artifact outputs/stage4/policies/category_shot_prior/fold0/policy_artifact.json --fold fold0 --split test
+python -m src.normroute.cli.run_agent --policy cost_aware --policy-artifact outputs/stage4/policies/cost_aware/fold0/policy_artifact.json --fold fold0 --split test
 pytest
 ```
 
@@ -162,6 +164,29 @@ Each fold writes a compact `policy_artifact.json` containing selected rules,
 train seeds, metric, tie-break contract, git commit, and hashes computed only
 from training rows. It contains no labels, masks, test quality, or raw quality
 values.
+
+## Cost-aware policy
+
+`cost_aware` computes mean quality and historical runtime on the current
+fold's training rows for every `(dataset, category, k_shot, expert)`. Category
+and global aggregates are retained only as deterministic fallbacks. Within a
+routing context it uses min-max normalization and selects the feasible expert
+that maximizes:
+
+```text
+utility = normalized_quality - lambda * normalized_runtime
+```
+
+The frozen default lambda grid is `0.0, 0.05, 0.1, 0.2, 0.5, 1.0`. Only the
+validation split may select lambda. Test quality/runtime cells are never
+parsed or hashed, and test replay can only load the final fold-specific
+`policy_artifact.json`. `max_runtime_ms` is an optional hard per-task ceiling
+applied to train-estimated expert runtime before utility maximization.
+
+Calibration writes `cost_quality_frontier.csv` beside the artifact. Its
+runtime values, `route_decisions.estimated_cost_ms`, and copied Stage 2 replay
+runtimes are all marked `runtime_source=estimated_runtime`: they are historical
+estimates, not wall-clock duration measured during the replay.
 
 ## Replay outputs
 
