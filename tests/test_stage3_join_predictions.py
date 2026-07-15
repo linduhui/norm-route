@@ -96,6 +96,7 @@ def test_build_routing_matrices_long_and_wide(tmp_path: Path) -> None:
     }
     assert all(row["label"] == "1" for row in matrices.long_rows)
     assert all(row["mask_path"] == "/masks/sample-1.png" for row in matrices.long_rows)
+    assert all(row["runtime_ms"] == "2.0" for row in matrices.long_rows)
     assert len(matrices.wide_rows) == 1
     assert matrices.wide_rows[0]["patchcore_score"] == "0.1"
     assert matrices.wide_rows[0]["winclip_score"] == "0.2"
@@ -135,4 +136,3 @@ def test_build_routing_matrix_cli_writes_default_named_files(tmp_path: Path) -> 
     assert completed.returncode == 0, completed.stderr
     assert (output_dir / "routing_matrix_long.csv").is_file()
     assert (output_dir / "routing_matrix_wide.csv").is_file()
-

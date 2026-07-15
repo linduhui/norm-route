@@ -153,6 +153,12 @@ class ReplayExecutor:
             ]
         else:
             safe_train_records = train_records
+        _validate_policy_fold_binding(
+            policy=self.policy,
+            fold=fold,
+            tasks=typed_tasks,
+            assignments=assignments,
+        )
         self.policy.fit(safe_train_records)
 
         started_at = _utc_now()
@@ -524,6 +530,38 @@ def _validate_decision_for_task(
     if decision.selected_expert not in task.candidate_experts:
         raise ReplayExecutionError(
             f"Policy selected non-candidate expert {decision.selected_expert!r}"
+        )
+
+
+def _validate_policy_fold_binding(
+    *,
+    policy: Policy,
+    fold: str,
+    tasks: Sequence[AgentTask],
+    assignments: Mapping[str, Mapping[str, str]],
+) -> None:
+    """Reject a fold-calibrated artifact when its provenance does not match replay."""
+
+    configuration = policy.configuration()
+    artifact_fold = configuration.get("fold")
+    if artifact_fold is not None and artifact_fold != fold:
+        raise ReplayExecutionError(
+            f"Policy artifact is calibrated for fold={artifact_fold!r}, not replay fold={fold!r}"
+        )
+    artifact_train_seeds = configuration.get("train_seeds")
+    if artifact_train_seeds is None:
+        return
+    manifest_train_seeds = sorted(
+        {
+            task.seed
+            for task in tasks
+            if assignments[task.task_id]["split"] == "train"
+        }
+    )
+    if list(artifact_train_seeds) != manifest_train_seeds:
+        raise ReplayExecutionError(
+            "Policy artifact train_seeds do not match the replay fold manifest; "
+            f"artifact={list(artifact_train_seeds)}, manifest={manifest_train_seeds}"
         )
 
 

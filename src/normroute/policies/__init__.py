@@ -10,6 +10,12 @@ from .fixed import (
     RandomSeededPolicy,
     load_expert_cost_card,
 )
+from .rule_based import (
+    CategoryPriorPolicy,
+    CategoryShotPriorPolicy,
+    RulePolicyArtifactError,
+    load_rule_policy_artifact,
+)
 
 __all__ = [
     "AlwaysAnomalyDinoPolicy",
@@ -19,5 +25,9 @@ __all__ = [
     "FastestExpertPolicy",
     "FixedExpertPolicy",
     "RandomSeededPolicy",
+    "CategoryPriorPolicy",
+    "CategoryShotPriorPolicy",
+    "RulePolicyArtifactError",
     "load_expert_cost_card",
+    "load_rule_policy_artifact",
 ]

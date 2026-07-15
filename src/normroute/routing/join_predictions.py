@@ -26,6 +26,7 @@ REQUIRED_STAGE3_PREDICTION_COLUMNS = (
     "expert_name",
     "final_score",
     "final_decision",
+    "runtime_ms",
     "anomaly_map_path",
     "status",
     "error_message",
@@ -39,6 +40,7 @@ LONG_COLUMNS = (
     "error_message",
     "anomaly_map_path",
     "pixel_score_path",
+    "runtime_ms",
     "label",
     "mask_path",
     "run_dir",
@@ -182,6 +184,7 @@ def build_routing_matrices(
                     "error_message": row["error_message"],
                     "anomaly_map_path": row["anomaly_map_path"],
                     "pixel_score_path": row.get("pixel_score_path", ""),
+                    "runtime_ms": row["runtime_ms"],
                     "label": evaluator["label"],
                     "mask_path": evaluator["mask_path"],
                     "run_dir": str(run_dir),
@@ -229,7 +232,11 @@ def read_prediction_rows(path: str | Path) -> list[dict[str, str]]:
         for line_number, row in enumerate(reader, start=2):
             clean = {key: (value or "").strip() for key, value in row.items()}
             missing = [column for column in KEY_COLUMNS if not clean.get(column)]
-            missing.extend(column for column in ("expert_name", "final_score") if not clean.get(column))
+            missing.extend(
+                column
+                for column in ("expert_name", "final_score", "runtime_ms")
+                if not clean.get(column)
+            )
             if missing:
                 raise RoutingMatrixError(
                     f"{predictions_path}:{line_number} is missing required values: {missing}"

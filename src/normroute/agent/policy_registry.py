@@ -13,6 +13,10 @@ from src.normroute.policies.fixed import (
     FastestExpertPolicy,
     RandomSeededPolicy,
 )
+from src.normroute.policies.rule_based import (
+    CategoryPriorPolicy,
+    CategoryShotPriorPolicy,
+)
 
 
 PolicyFactory = Callable[..., Policy]
@@ -77,3 +81,5 @@ register_policy(AlwaysPatchCorePolicy.name, AlwaysPatchCorePolicy)
 register_policy(AlwaysWinCLIPPolicy.name, AlwaysWinCLIPPolicy)
 register_policy(RandomSeededPolicy.name, RandomSeededPolicy)
 register_policy(FastestExpertPolicy.name, FastestExpertPolicy)
+register_policy(CategoryPriorPolicy.name, CategoryPriorPolicy)
+register_policy(CategoryShotPriorPolicy.name, CategoryShotPriorPolicy)

@@ -55,6 +55,7 @@ def _routing_row(
         "error_message": "",
         "anomaly_map_path": "",
         "pixel_score_path": "",
+        "runtime_ms": 2.0,
         "label": label,
         "mask_path": "",
         "run_dir": "outputs/stage2/run",
@@ -88,6 +89,7 @@ def test_evaluate_expert_quality_by_run_summary_and_warnings(tmp_path: Path) -> 
         "error_message",
         "anomaly_map_path",
         "pixel_score_path",
+        "runtime_ms",
         "label",
         "mask_path",
         "run_dir",
@@ -114,6 +116,7 @@ def test_evaluate_expert_quality_by_run_summary_and_warnings(tmp_path: Path) -> 
     assert by_run["patchcore"]["num_samples"] == 4
     assert by_run["patchcore"]["num_normal"] == 2
     assert by_run["patchcore"]["num_anomaly"] == 2
+    assert by_run["patchcore"]["average_runtime_ms"] == pytest.approx(2.0)
     assert by_run["winclip"]["image_auroc"] is None
     assert by_run["winclip"]["image_ap"] is None
     assert len(result.warnings) == 1
@@ -132,6 +135,7 @@ def test_evaluate_expert_quality_by_run_summary_and_warnings(tmp_path: Path) -> 
 
     written_by_run = {row["expert"]: row for row in _read_csv(by_run_path)}
     assert written_by_run["patchcore"]["image_auroc"] == "1"
+    assert written_by_run["patchcore"]["average_runtime_ms"] == "2"
     assert written_by_run["winclip"]["image_auroc"] == ""
     warnings_payload = json.loads(warnings_path.read_text(encoding="utf-8"))
     assert warnings_payload["warnings"] == result.warnings
@@ -155,6 +159,7 @@ def test_evaluate_expert_quality_cli_writes_expected_files(tmp_path: Path) -> No
             "error_message",
             "anomaly_map_path",
             "pixel_score_path",
+            "runtime_ms",
             "label",
             "mask_path",
             "run_dir",

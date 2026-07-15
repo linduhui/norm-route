@@ -19,6 +19,7 @@ BY_RUN_COLUMNS = (
     "image_ap",
     "image_f1_max",
     "best_threshold",
+    "average_runtime_ms",
     "num_samples",
     "num_normal",
     "num_anomaly",
@@ -32,6 +33,7 @@ SUMMARY_COLUMNS = (
     "image_auroc_mean",
     "image_ap_mean",
     "image_f1_max_mean",
+    "average_runtime_ms_mean",
 )
 REQUIRED_COLUMNS = (
     "dataset",
@@ -87,6 +89,7 @@ def read_routing_matrix_long(path: str | Path) -> list[dict[str, str]]:
         fieldnames = reader.fieldnames or []
         expert_column = _expert_column(fieldnames)
         score_column = _score_column(fieldnames)
+        has_runtime = "runtime_ms" in fieldnames
         missing = [
             column
             for column in (*REQUIRED_COLUMNS, expert_column, score_column)
@@ -111,6 +114,18 @@ def read_routing_matrix_long(path: str | Path) -> list[dict[str, str]]:
                 )
             _parse_label(clean["label"], matrix_path, line_number)
             _parse_float(clean["image_score"], matrix_path, line_number, "image_score")
+            if has_runtime:
+                if not clean.get("runtime_ms"):
+                    raise QualityMetricError(
+                        f"{matrix_path}:{line_number} is missing required value: runtime_ms"
+                    )
+                runtime_ms = _parse_float(
+                    clean["runtime_ms"], matrix_path, line_number, "runtime_ms"
+                )
+                if runtime_ms < 0:
+                    raise QualityMetricError(
+                        f"{matrix_path}:{line_number} has negative runtime_ms"
+                    )
             rows.append(clean)
     return rows
 
@@ -144,12 +159,24 @@ def compute_group_metrics(
         image_ap = compute_average_precision(labels, scores)
 
     image_f1_max, best_threshold = compute_f1_max(labels, scores)
+    runtime_values = [row.get("runtime_ms", "") for row in rows]
+    if any(runtime_values) and not all(runtime_values):
+        raise QualityMetricError(
+            "Runtime coverage is inconsistent within run group: "
+            + ", ".join(f"{column}={value}" for column, value in zip(GROUP_COLUMNS, key))
+        )
+    average_runtime_ms = (
+        sum(float(value) for value in runtime_values) / len(runtime_values)
+        if runtime_values and all(runtime_values)
+        else None
+    )
     return {
         **dict(zip(GROUP_COLUMNS, key)),
         "image_auroc": image_auroc,
         "image_ap": image_ap,
         "image_f1_max": image_f1_max,
         "best_threshold": best_threshold,
+        "average_runtime_ms": average_runtime_ms,
         "num_samples": num_samples,
         "num_normal": num_normal,
         "num_anomaly": num_anomaly,
@@ -237,6 +264,9 @@ def summarize_quality_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "image_auroc_mean": _mean_defined(row["image_auroc"] for row in group_rows),
                 "image_ap_mean": _mean_defined(row["image_ap"] for row in group_rows),
                 "image_f1_max_mean": _mean_defined(row["image_f1_max"] for row in group_rows),
+                "average_runtime_ms_mean": _mean_defined(
+                    row.get("average_runtime_ms") for row in group_rows
+                ),
             }
         )
     return summaries

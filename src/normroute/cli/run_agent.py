@@ -47,6 +47,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--expert-cost-card",
         help="Predeclared JSON runtime cost card for fastest_expert.",
     )
+    parser.add_argument(
+        "--policy-artifact",
+        help="Fold-specific policy_artifact.json for category rule policies.",
+    )
     return parser.parse_args(argv)
 
 
@@ -60,6 +64,12 @@ def main(argv: list[str] | None = None) -> None:
             policy_kwargs["seed"] = args.seed
         if args.policy == "fastest_expert" and args.expert_cost_card:
             policy_kwargs["cost_card"] = args.expert_cost_card
+        if args.policy in {"category_prior", "category_shot_prior"}:
+            if not args.policy_artifact:
+                raise ValueError(
+                    f"Policy {args.policy!r} requires --policy-artifact"
+                )
+            policy_kwargs["artifact"] = args.policy_artifact
         policy = create_policy(args.policy, **policy_kwargs)
         train_records = None
         if args.policy == "fastest_expert" and not args.expert_cost_card:
