@@ -139,9 +139,29 @@ Run from the repository root:
 ```powershell
 python -m src.normroute.cli.build_stage4_tasks
 python -m src.normroute.cli.build_stage4_splits
+python scripts/calibrate_policy.py --policy category_shot_prior
 python -m src.normroute.cli.run_agent --policy always_anomalydino --fold fold0 --split test
+python -m src.normroute.cli.run_agent --policy category_shot_prior --policy-artifact outputs/stage4/policies/category_shot_prior/fold0/policy_artifact.json --fold fold0 --split test
 pytest
 ```
+
+## Fold-specific rule policies
+
+`calibrate_policy.py` joins Stage 3 `expert_quality_by_run.csv` to the frozen
+fold manifest by run identity and parses quality/runtime values only for the
+requested fold's `train` rows. `category_prior` selects the best mean-training
+expert for `(dataset, category)`. `category_shot_prior` first uses
+`(dataset, category, k_shot)`, then falls back to category and finally the
+global train-fold best. The default optimization metric is `image_auroc`;
+`image_ap` is selectable. Metric ties use lower mean training runtime, followed
+only when runtime is also tied by the frozen candidate-expert order.
+The runtime tie-break reads `average_runtime_ms`, propagated into the Stage 3
+per-run quality table from immutable Stage 2 prediction runtimes.
+
+Each fold writes a compact `policy_artifact.json` containing selected rules,
+train seeds, metric, tie-break contract, git commit, and hashes computed only
+from training rows. It contains no labels, masks, test quality, or raw quality
+values.
 
 ## Replay outputs
 

@@ -33,6 +33,7 @@ Columns:
 - `error_message`
 - `anomaly_map_path`
 - `pixel_score_path`
+- `runtime_ms`
 - `label`
 - `mask_path`
 - `run_dir`
