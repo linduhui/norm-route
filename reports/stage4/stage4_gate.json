@@ -1,0 +1,803 @@
+{
+  "checks": [
+    {
+      "errors": [],
+      "name": "pre_route_tasks_no_forbidden_fields",
+      "num_errors": 0,
+      "stats": {
+        "num_tasks": 34500,
+        "num_unique_task_ids": 34500,
+        "path": "outputs\\stage4\\tasks\\pre_route_tasks.jsonl"
+      },
+      "status": "PASS",
+      "summary": "validated 34500 pre-route tasks"
+    },
+    {
+      "errors": [],
+      "name": "policy_feature_manifest_no_leakage",
+      "num_errors": 0,
+      "stats": {
+        "num_feature_manifests": 10,
+        "policy_root": "outputs\\stage4\\policies\\full_cv_20260716_060523"
+      },
+      "status": "PASS",
+      "summary": "validated 10 learned-policy feature manifests"
+    },
+    {
+      "errors": [],
+      "name": "train_val_test_isolation",
+      "num_errors": 0,
+      "stats": {
+        "fold_seed_sets": {
+          "fold0": {
+            "test": [
+              "0"
+            ],
+            "train": [
+              "2",
+              "3",
+              "4"
+            ],
+            "val": [
+              "1"
+            ]
+          },
+          "fold1": {
+            "test": [
+              "1"
+            ],
+            "train": [
+              "0",
+              "3",
+              "4"
+            ],
+            "val": [
+              "2"
+            ]
+          },
+          "fold2": {
+            "test": [
+              "2"
+            ],
+            "train": [
+              "0",
+              "1",
+              "4"
+            ],
+            "val": [
+              "3"
+            ]
+          },
+          "fold3": {
+            "test": [
+              "3"
+            ],
+            "train": [
+              "0",
+              "1",
+              "2"
+            ],
+            "val": [
+              "4"
+            ]
+          },
+          "fold4": {
+            "test": [
+              "4"
+            ],
+            "train": [
+              "1",
+              "2",
+              "3"
+            ],
+            "val": [
+              "0"
+            ]
+          }
+        },
+        "manifest_path": "outputs\\stage4\\splits\\fold_manifest.csv",
+        "num_folds": 5,
+        "num_rows": 172500
+      },
+      "status": "PASS",
+      "summary": "validated 172500 assignments across 5 folds"
+    },
+    {
+      "errors": [
+        "random_seeded/fold0/test selects multiple experts inside 60 complete runs; examples=[(('mvtec', 'metal_nut', '1', '0', 'mvtec_metal_nut_k1_seed0'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '2', '0', 'mvtec_metal_nut_k2_seed0'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '4', '0', 'mvtec_metal_nut_k4_seed0'), ['anomalydino', 'patchcore', 'winclip'])]",
+        "random_seeded/fold1/test selects multiple experts inside 60 complete runs; examples=[(('mvtec', 'metal_nut', '1', '1', 'mvtec_metal_nut_k1_seed1'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '2', '1', 'mvtec_metal_nut_k2_seed1'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '4', '1', 'mvtec_metal_nut_k4_seed1'), ['anomalydino', 'patchcore', 'winclip'])]",
+        "random_seeded/fold2/test selects multiple experts inside 60 complete runs; examples=[(('mvtec', 'metal_nut', '1', '2', 'mvtec_metal_nut_k1_seed2'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '2', '2', 'mvtec_metal_nut_k2_seed2'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '4', '2', 'mvtec_metal_nut_k4_seed2'), ['anomalydino', 'patchcore', 'winclip'])]",
+        "random_seeded/fold3/test selects multiple experts inside 60 complete runs; examples=[(('mvtec', 'metal_nut', '1', '3', 'mvtec_metal_nut_k1_seed3'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '2', '3', 'mvtec_metal_nut_k2_seed3'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '4', '3', 'mvtec_metal_nut_k4_seed3'), ['anomalydino', 'patchcore', 'winclip'])]",
+        "random_seeded/fold4/test selects multiple experts inside 60 complete runs; examples=[(('mvtec', 'metal_nut', '1', '4', 'mvtec_metal_nut_k1_seed4'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '2', '4', 'mvtec_metal_nut_k2_seed4'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '4', '4', 'mvtec_metal_nut_k4_seed4'), ['anomalydino', 'patchcore', 'winclip'])]"
+      ],
+      "name": "route_decisions_one_expert_per_run",
+      "num_errors": 5,
+      "stats": {
+        "num_failed_tasks": 0,
+        "num_route_decisions": 345000,
+        "num_run_directories": 50,
+        "num_selected_predictions": 345000,
+        "runs_root": "outputs\\stage4\\runs\\full_cv_20260716_060523",
+        "selected_prediction_paths": [
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold4\\test\\selected_predictions.csv"
+        ]
+      },
+      "status": "FAIL",
+      "summary": "validated one route decision and one expert per complete run across 50 run directories"
+    },
+    {
+      "errors": [],
+      "name": "tool_calls_at_most_one",
+      "num_errors": 0,
+      "stats": {
+        "num_failed_tasks": 0,
+        "num_route_decisions": 345000,
+        "num_run_directories": 50,
+        "num_selected_predictions": 345000,
+        "runs_root": "outputs\\stage4\\runs\\full_cv_20260716_060523",
+        "selected_prediction_paths": [
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold4\\test\\selected_predictions.csv"
+        ]
+      },
+      "status": "PASS",
+      "summary": "validated tool_calls <= 1 across 345000 decisions and 345000 predictions"
+    },
+    {
+      "errors": [],
+      "name": "selected_predictions_match_selected_expert",
+      "num_errors": 0,
+      "stats": {
+        "num_failed_tasks": 0,
+        "num_route_decisions": 345000,
+        "num_run_directories": 50,
+        "num_selected_predictions": 345000,
+        "runs_root": "outputs\\stage4\\runs\\full_cv_20260716_060523",
+        "selected_prediction_paths": [
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold4\\test\\selected_predictions.csv"
+        ]
+      },
+      "status": "PASS",
+      "summary": "aligned 345000 selected predictions to route decisions"
+    },
+    {
+      "errors": [],
+      "name": "failures_match_metrics",
+      "num_errors": 0,
+      "stats": {
+        "num_failed_tasks": 0,
+        "num_route_decisions": 345000,
+        "num_run_directories": 50,
+        "num_selected_predictions": 345000,
+        "runs_root": "outputs\\stage4\\runs\\full_cv_20260716_060523",
+        "selected_prediction_paths": [
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold4\\test\\selected_predictions.csv"
+        ]
+      },
+      "status": "PASS",
+      "summary": "reconciled 0 recorded failures with run counts"
+    },
+    {
+      "errors": [],
+      "name": "reproducibility_artifacts",
+      "num_errors": 0,
+      "stats": {
+        "num_failed_tasks": 0,
+        "num_route_decisions": 345000,
+        "num_run_directories": 50,
+        "num_selected_predictions": 345000,
+        "runs_root": "outputs\\stage4\\runs\\full_cv_20260716_060523",
+        "selected_prediction_paths": [
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_anomalydino\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_patchcore\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\always_winclip\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_prior\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\category_shot_prior\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\cost_aware\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\decision_tree_metadata\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\fastest_expert\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\multinomial_logistic_metadata\\fold4\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold0\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold1\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold2\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold3\\test\\selected_predictions.csv",
+          "outputs\\stage4\\runs\\full_cv_20260716_060523\\random_seeded\\fold4\\test\\selected_predictions.csv"
+        ]
+      },
+      "status": "PASS",
+      "summary": "validated required artifacts and provenance for 50 runs"
+    },
+    {
+      "errors": [],
+      "name": "failures_match_evaluation_metrics",
+      "num_errors": 0,
+      "stats": {
+        "evaluation_root": "outputs\\stage4\\evaluation\\full_cv_20260716_060523",
+        "evaluator_completed_at_utc": "2026-07-16T06:29:15.738495+00:00",
+        "num_evaluated_samples": 345000,
+        "num_evaluation_failures": 0,
+        "num_evaluator_inputs": 50,
+        "num_metric_rows": 50,
+        "num_summary_failure_cases": 0,
+        "summary_completed_at_utc": "2026-07-16T06:21:54.479608+00:00"
+      },
+      "status": "PASS",
+      "summary": "reconciled 50 metric rows and evaluator failure counts"
+    },
+    {
+      "errors": [],
+      "name": "evaluator_after_route_decision",
+      "num_errors": 0,
+      "stats": {
+        "evaluation_root": "outputs\\stage4\\evaluation\\full_cv_20260716_060523",
+        "evaluator_completed_at_utc": "2026-07-16T06:29:15.738495+00:00",
+        "num_evaluated_samples": 345000,
+        "num_evaluation_failures": 0,
+        "num_evaluator_inputs": 50,
+        "num_metric_rows": 50,
+        "num_summary_failure_cases": 0,
+        "summary_completed_at_utc": "2026-07-16T06:21:54.479608+00:00"
+      },
+      "status": "PASS",
+      "summary": "validated evaluator ordering for 50 routed inputs"
+    },
+    {
+      "errors": [],
+      "name": "live_smoke",
+      "num_errors": 0,
+      "stats": {
+        "actual_subprocess_runtime_ms": 205.4006669204682,
+        "category": "bottle",
+        "dataset": "mvtec",
+        "evaluator_completed_at_utc": "2026-07-16T07:35:41.447276+00:00",
+        "k_shot": "1",
+        "live_run_dir": "outputs\\stage4\\live\\20260716_073518_fold4_mvtec_bottle_k1_seed4",
+        "num_decisions": 1,
+        "num_metric_rows": 1,
+        "num_selected_predictions": 1,
+        "policy_name": "category_shot_prior",
+        "run_completed_at_utc": "2026-07-16T07:35:41.447525+00:00",
+        "run_started_at_utc": "2026-07-16T07:35:41.194421+00:00",
+        "seed": "4",
+        "selected_expert": "PatchCore"
+      },
+      "status": "PASS",
+      "summary": "validated latest live smoke run with 1 prediction(s)"
+    },
+    {
+      "errors": [],
+      "name": "stage4_report_inputs",
+      "num_errors": 0,
+      "stats": {
+        "num_cost_quality_rows": 180,
+        "num_folds": 5,
+        "num_policy_summary_rows": 36
+      },
+      "status": "PASS",
+      "summary": "validated 36 policy-summary rows, 180 cost-quality rows, and five-fold config"
+    }
+  ],
+  "config": {
+    "evaluation_root": "outputs\\stage4\\evaluation\\full_cv_20260716_060523",
+    "fold_manifest_path": "outputs\\stage4\\splits\\fold_manifest.csv",
+    "live_root": "outputs\\stage4\\live",
+    "policy_root": "outputs\\stage4\\policies\\full_cv_20260716_060523",
+    "require_live": true,
+    "runs_root": "outputs\\stage4\\runs\\full_cv_20260716_060523",
+    "stage4_root": "outputs\\stage4",
+    "tasks_path": "outputs\\stage4\\tasks\\pre_route_tasks.jsonl"
+  },
+  "environment": {
+    "platform": "Windows-11-10.0.26120-SP0",
+    "python_executable": "C:\\Users\\15876\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+    "python_version": "3.12.13 (main, Mar  3 2026, 15:01:35) [MSC v.1944 64 bit (AMD64)]"
+  },
+  "errors": [
+    "route_decisions_one_expert_per_run: random_seeded/fold0/test selects multiple experts inside 60 complete runs; examples=[(('mvtec', 'metal_nut', '1', '0', 'mvtec_metal_nut_k1_seed0'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '2', '0', 'mvtec_metal_nut_k2_seed0'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '4', '0', 'mvtec_metal_nut_k4_seed0'), ['anomalydino', 'patchcore', 'winclip'])]",
+    "route_decisions_one_expert_per_run: random_seeded/fold1/test selects multiple experts inside 60 complete runs; examples=[(('mvtec', 'metal_nut', '1', '1', 'mvtec_metal_nut_k1_seed1'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '2', '1', 'mvtec_metal_nut_k2_seed1'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '4', '1', 'mvtec_metal_nut_k4_seed1'), ['anomalydino', 'patchcore', 'winclip'])]",
+    "route_decisions_one_expert_per_run: random_seeded/fold2/test selects multiple experts inside 60 complete runs; examples=[(('mvtec', 'metal_nut', '1', '2', 'mvtec_metal_nut_k1_seed2'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '2', '2', 'mvtec_metal_nut_k2_seed2'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '4', '2', 'mvtec_metal_nut_k4_seed2'), ['anomalydino', 'patchcore', 'winclip'])]",
+    "route_decisions_one_expert_per_run: random_seeded/fold3/test selects multiple experts inside 60 complete runs; examples=[(('mvtec', 'metal_nut', '1', '3', 'mvtec_metal_nut_k1_seed3'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '2', '3', 'mvtec_metal_nut_k2_seed3'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '4', '3', 'mvtec_metal_nut_k4_seed3'), ['anomalydino', 'patchcore', 'winclip'])]",
+    "route_decisions_one_expert_per_run: random_seeded/fold4/test selects multiple experts inside 60 complete runs; examples=[(('mvtec', 'metal_nut', '1', '4', 'mvtec_metal_nut_k1_seed4'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '2', '4', 'mvtec_metal_nut_k2_seed4'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '4', '4', 'mvtec_metal_nut_k4_seed4'), ['anomalydino', 'patchcore', 'winclip'])]"
+  ],
+  "generated_at_utc": "2026-07-16T11:16:28.853504+00:00",
+  "git_commit": "63e254e841c0597f69952ff90bf37f65fd262a6d",
+  "input_sha256": {
+    "outputs\\stage4\\evaluation\\full_cv_20260716_060523\\stage4_summary_config.json": "828e4e07079b161c400e7d3da7dd3f0ff10098b5e61aba9acf19a9e9f25c3b1f",
+    "outputs\\stage4\\evaluation\\full_cv_20260716_060523\\stage4_summary_metadata.json": "21b7a0492488209806762330fbfa211dfe8d87985b61f75fcc70ab5d8b96952b",
+    "outputs\\stage4\\runs\\full_cv_20260716_060523\\grid_config.json": "5bbbbfe9b376f5b43f1916f82f17b7a099154968f139828c9456b08f24572546",
+    "outputs\\stage4\\runs\\full_cv_20260716_060523\\grid_metadata.json": "d406856443b42b85fd93a1c8416ed656693f55e4d9f104a8909999cdea4725b6",
+    "outputs\\stage4\\splits\\fold_manifest.csv": "f47fc8b313d8a821a41a1cea1ba28485a36c5a6e66125921a25db5c7608ae420",
+    "outputs\\stage4\\splits\\split_audit.json": "c7513a195e7148f2d18576c48088afeb8351f3785996778f771f7b4f9e5be5c7",
+    "outputs\\stage4\\tasks\\pre_route_tasks.jsonl": "7575cfe3cceb4cac4df18156ee88acac1fc43497ea7e1d1843e73bac205903ef"
+  },
+  "num_checks": 12,
+  "num_failed": 1,
+  "num_passed": 11,
+  "num_skipped": 0,
+  "protocol_version": "stage4.gate.v1",
+  "report_input_sha256": {
+    "outputs\\stage4\\evaluation\\full_cv_20260716_060523\\stage4_cost_quality.csv": "50140ab4259996d6edbfd1729c71f2cfccbcd30261655317f5ca77243f7f5cba",
+    "outputs\\stage4\\evaluation\\full_cv_20260716_060523\\stage4_policy_summary.csv": "f838c0e817a43dc042ed4d04ec468e3ddff446eff3f728df95a7c41eb605e993",
+    "outputs\\stage4\\splits\\split_audit.json": "c7513a195e7148f2d18576c48088afeb8351f3785996778f771f7b4f9e5be5c7"
+  },
+  "report_summary": {
+    "best_fixed_baseline": {
+      "aggregation": "micro",
+      "ap_mean": 0.733302826273,
+      "ap_std": 0.00201553075021,
+      "auroc_mean": 0.514017014874,
+      "auroc_std": 0.00724497664945,
+      "average_estimated_runtime_ms_mean": 53.6672305425,
+      "average_tool_calls_mean": 1.0,
+      "f1_mean": 0.120048424758,
+      "f1_std": 0.0134748296579,
+      "num_folds": 5,
+      "oracle_regret_mean": 0.0121542258028,
+      "policy_kind": "realizable_policy",
+      "policy_name": "fastest_expert"
+    },
+    "best_learned_metadata_baseline": {
+      "aggregation": "micro",
+      "ap_mean": 0.753312694137,
+      "ap_std": 0.00315764236383,
+      "auroc_mean": 0.519345120565,
+      "auroc_std": 0.00837222578687,
+      "average_estimated_runtime_ms_mean": 66.2570658136,
+      "average_tool_calls_mean": 1.0,
+      "f1_mean": 0.265927657708,
+      "f1_std": 0.0624011799757,
+      "num_folds": 5,
+      "oracle_regret_mean": 0.0068261201118,
+      "policy_kind": "realizable_policy",
+      "policy_name": "decision_tree_metadata"
+    },
+    "best_overall_realizable": {
+      "aggregation": "micro",
+      "ap_mean": 0.756287781787,
+      "ap_std": 0.00329141344096,
+      "auroc_mean": 0.522179443425,
+      "auroc_std": 0.00621297854779,
+      "average_estimated_runtime_ms_mean": 64.8129568011,
+      "average_tool_calls_mean": 1.0,
+      "f1_mean": 0.244222812765,
+      "f1_std": 0.016829270086,
+      "num_folds": 5,
+      "oracle_regret_mean": 0.00399179725134,
+      "policy_kind": "realizable_policy",
+      "policy_name": "cost_aware"
+    },
+    "best_rule_agent": {
+      "aggregation": "micro",
+      "ap_mean": 0.756287781787,
+      "ap_std": 0.00329141344096,
+      "auroc_mean": 0.522179443425,
+      "auroc_std": 0.00621297854779,
+      "average_estimated_runtime_ms_mean": 64.8129568011,
+      "average_tool_calls_mean": 1.0,
+      "f1_mean": 0.244222812765,
+      "f1_std": 0.016829270086,
+      "num_folds": 5,
+      "oracle_regret_mean": 0.00399179725134,
+      "policy_kind": "realizable_policy",
+      "policy_name": "cost_aware"
+    },
+    "claim_scope": "Stage 4 protocol/wrapper comparison only; not final SOTA",
+    "cost_quality_frontier": [
+      {
+        "aggregation": "micro",
+        "ap_mean": 0.733302826273,
+        "ap_std": 0.00201553075021,
+        "auroc_mean": 0.514017014874,
+        "auroc_std": 0.00724497664945,
+        "average_estimated_runtime_ms_mean": 53.6672305425,
+        "average_tool_calls_mean": 1.0,
+        "f1_mean": 0.120048424758,
+        "f1_std": 0.0134748296579,
+        "num_folds": 5,
+        "oracle_regret_mean": 0.0121542258028,
+        "policy_kind": "realizable_policy",
+        "policy_name": "fastest_expert"
+      },
+      {
+        "aggregation": "micro",
+        "ap_mean": 0.756287781787,
+        "ap_std": 0.00329141344096,
+        "auroc_mean": 0.522179443425,
+        "auroc_std": 0.00621297854779,
+        "average_estimated_runtime_ms_mean": 64.8129568011,
+        "average_tool_calls_mean": 1.0,
+        "f1_mean": 0.244222812765,
+        "f1_std": 0.016829270086,
+        "num_folds": 5,
+        "oracle_regret_mean": 0.00399179725134,
+        "policy_kind": "realizable_policy",
+        "policy_name": "cost_aware"
+      }
+    ],
+    "cost_quality_tradeoff": {
+      "auroc_delta": 0.008162428551000023,
+      "high_quality_auroc": 0.522179443425,
+      "high_quality_policy": "cost_aware",
+      "high_quality_runtime_ms": 64.8129568011,
+      "low_cost_auroc": 0.514017014874,
+      "low_cost_policy": "fastest_expert",
+      "low_cost_runtime_ms": 53.6672305425,
+      "runtime_delta_ms": 11.1457262586,
+      "runtime_delta_percent": 20.768215810528005
+    },
+    "expert_implementation_mode": "Local no-download, support-guided PatchCore-style, WinCLIP-style, and AnomalyDINO-style wrappers used to validate the protocol and routing stack; these are not the official external baseline implementations.",
+    "five_fold_protocol": {
+      "expected_seeds": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "folds": {
+        "fold0": {
+          "test": [
+            0
+          ],
+          "train": [
+            2,
+            3,
+            4
+          ],
+          "val": [
+            1
+          ]
+        },
+        "fold1": {
+          "test": [
+            1
+          ],
+          "train": [
+            0,
+            3,
+            4
+          ],
+          "val": [
+            2
+          ]
+        },
+        "fold2": {
+          "test": [
+            2
+          ],
+          "train": [
+            0,
+            1,
+            4
+          ],
+          "val": [
+            3
+          ]
+        },
+        "fold3": {
+          "test": [
+            3
+          ],
+          "train": [
+            0,
+            1,
+            2
+          ],
+          "val": [
+            4
+          ]
+        },
+        "fold4": {
+          "test": [
+            4
+          ],
+          "train": [
+            1,
+            2,
+            3
+          ],
+          "val": [
+            0
+          ]
+        }
+      },
+      "num_folds": 5,
+      "protocol_version": "stage4.seed_cv.v1",
+      "split_unit": "seed"
+    },
+    "fold_matched_run_level_oracle": {
+      "aggregation": "micro",
+      "ap_mean": 0.75919913823,
+      "ap_std": 0.0020157606891,
+      "auroc_mean": 0.526171240676,
+      "auroc_std": 0.00727241912812,
+      "average_estimated_runtime_ms_mean": 64.8790451769,
+      "average_tool_calls_mean": 1.0,
+      "f1_mean": 0.244962326765,
+      "f1_std": 0.0276210249943,
+      "num_folds": 5,
+      "oracle_regret_mean": 0.0,
+      "policy_kind": "evaluator_only_reference",
+      "policy_name": "run_level_oracle"
+    },
+    "limitations": [
+      "All quality numbers come from local no-download support-guided wrappers, not official external baseline implementations or a final NORM-Route model.",
+      "The current Stage 4 full-CV report covers MVTec; it is not a multi-dataset SOTA comparison.",
+      "Replay costs are historical estimated runtimes copied from immutable Stage 2 outputs; only the one-sample live smoke records actual subprocess runtime.",
+      "F1 uses saved wrapper decisions and frozen thresholds; target abnormal test samples were not used for threshold or hyperparameter tuning.",
+      "The live smoke contains one routed sample, so it validates wiring and ordering rather than production latency or quality.",
+      "The saved random_seeded control selects experts per sample and therefore violates the frozen one-expert-per-complete-run gate; the existing results are retained and the gate remains FAIL."
+    ],
+    "live_smoke": {
+      "actual_subprocess_runtime_ms": 205.4006669204682,
+      "category": "bottle",
+      "dataset": "mvtec",
+      "errors": [],
+      "evaluator_completed_at_utc": "2026-07-16T07:35:41.447276+00:00",
+      "k_shot": "1",
+      "live_run_dir": "outputs\\stage4\\live\\20260716_073518_fold4_mvtec_bottle_k1_seed4",
+      "num_decisions": 1,
+      "num_metric_rows": 1,
+      "num_selected_predictions": 1,
+      "policy_name": "category_shot_prior",
+      "run_completed_at_utc": "2026-07-16T07:35:41.447525+00:00",
+      "run_started_at_utc": "2026-07-16T07:35:41.194421+00:00",
+      "seed": "4",
+      "selected_expert": "PatchCore",
+      "status": "PASS"
+    },
+    "num_cost_quality_fold_rows": 180,
+    "oracle_gap": {
+      "auroc_gap": 0.003991797250999962,
+      "oracle_auroc": 0.526171240676,
+      "oracle_name": "run_level_oracle",
+      "policy_auroc": 0.522179443425,
+      "policy_name": "cost_aware",
+      "reported_oracle_regret_mean": 0.00399179725134
+    },
+    "primary_selection": {
+      "aggregation": "micro",
+      "metric": "auroc_mean",
+      "tie_break": "policy_name"
+    },
+    "stage5_directions": [
+      "Integrate official, version-pinned baseline adapters and user-provided weights without automatic downloads; preserve external core algorithms.",
+      "Freeze a leakage-safe learned router with query-visible features only, then repeat fold-isolated calibration and testing.",
+      "Make every stochastic control choose once per complete run and add the invariant to replay/grid tests before regenerating comparisons.",
+      "Expand live execution beyond a one-sample smoke and report actual latency, memory, failures, and quality with uncertainty.",
+      "Add VisA and other held-out datasets under the same support_set_id and evaluator-isolation protocol."
+    ]
+  },
+  "status": "FAIL"
+}
