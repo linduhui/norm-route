@@ -24,7 +24,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="One or more selected_predictions.csv files.",
     )
     parser.add_argument("--evaluator-csv", required=True)
-    parser.add_argument("--output-dir", default="outputs/stage4/evaluator_only")
+    parser.add_argument(
+        "--output-dir", default="outputs/stage4/evaluation/selected_predictions"
+    )
     return parser.parse_args(argv)
 
 

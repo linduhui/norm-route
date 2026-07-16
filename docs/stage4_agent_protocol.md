@@ -98,6 +98,26 @@ Oracle decisions, and realized expert scores must remain outside the Agent and
 policy boundary. Target abnormal samples must not be used to tune routing
 rules, thresholds, prompts, budgets, or hyperparameters.
 
+## Full test-grid evaluation
+
+After every policy/fold replay is complete, run the evaluator-only summarizer:
+
+```bash
+python scripts/summarize_stage4.py \
+  --runs-root outputs/stage4/runs \
+  --evaluator-csv data/manifests/mvtec_evaluator.csv \
+  --fold-manifest outputs/stage4/splits/fold_manifest.csv
+```
+
+The command writes detailed evaluator-only summaries under
+`outputs/stage4/evaluation`. It copies only the five compact CSV summaries to
+`reports/stage4`; failure details and provenance stay in the evaluation tree.
+Metrics are reported as pooled (`micro`), `macro_category`, and `macro_run`.
+`best_single_expert` and `run_level_oracle` are recomputed independently inside
+each test fold and are marked as evaluator-only references. A run-level Oracle
+selects one expert for the complete dataset/category/K/seed/support-set run.
+No sample-level Oracle is exported or treated as a realizable policy.
+
 ## Fixed five-fold seed split
 
 The split unit is the complete support-selection `seed`, not an individual
