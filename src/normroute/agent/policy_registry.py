@@ -18,6 +18,10 @@ from src.normroute.policies.rule_based import (
     CategoryPriorPolicy,
     CategoryShotPriorPolicy,
 )
+from src.normroute.policies.learned import (
+    DecisionTreeMetadataPolicy,
+    MultinomialLogisticMetadataPolicy,
+)
 
 
 PolicyFactory = Callable[..., Policy]
@@ -85,3 +89,5 @@ register_policy(FastestExpertPolicy.name, FastestExpertPolicy)
 register_policy(CategoryPriorPolicy.name, CategoryPriorPolicy)
 register_policy(CategoryShotPriorPolicy.name, CategoryShotPriorPolicy)
 register_policy(CostAwarePolicy.name, CostAwarePolicy)
+register_policy(DecisionTreeMetadataPolicy.name, DecisionTreeMetadataPolicy)
+register_policy(MultinomialLogisticMetadataPolicy.name, MultinomialLogisticMetadataPolicy)

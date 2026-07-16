@@ -66,6 +66,8 @@ ROUTE_DECISION_FIELDS = frozenset(
         "decision_reason",
         "estimated_cost_ms",
         "tool_calls",
+        "selected_probability",
+        "margin",
         "fold",
         "split",
     }
@@ -174,6 +176,8 @@ class RouteDecision:
     decision_reason: str
     estimated_cost_ms: float
     tool_calls: int
+    selected_probability: float | None = None
+    margin: float | None = None
     fold: str = ""
     split: str = ""
 
@@ -227,6 +231,26 @@ def validate_route_decision(
     if not math.isfinite(float(estimated_cost)) or estimated_cost < 0:
         raise Stage4ProtocolError(
             f"{context} field 'estimated_cost_ms' must be a non-negative number"
+        )
+    for field in ("selected_probability", "margin"):
+        value = payload[field]
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise Stage4ProtocolError(
+                f"{context} field {field!r} must be null or a probability in [0, 1]"
+            )
+        if not math.isfinite(float(value)) or not 0.0 <= float(value) <= 1.0:
+            raise Stage4ProtocolError(
+                f"{context} field {field!r} must be null or a probability in [0, 1]"
+            )
+    if (
+        payload["selected_probability"] is not None
+        and payload["margin"] is not None
+        and float(payload["margin"]) > float(payload["selected_probability"]) + 1e-12
+    ):
+        raise Stage4ProtocolError(
+            f"{context} field 'margin' cannot exceed selected_probability"
         )
     if payload["selected_expert"] not in CANDIDATE_EXPERTS:
         raise Stage4ProtocolError(

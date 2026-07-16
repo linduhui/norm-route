@@ -1,4 +1,4 @@
-"""Script entry point for fold-specific Stage 4 rule calibration."""
+"""Script entry point for fold-specific Stage 4 policy calibration/training."""
 
 from __future__ import annotations
 

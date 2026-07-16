@@ -53,6 +53,8 @@ ROUTE_DECISION_COLUMNS = (
     "decision_reason",
     "estimated_cost_ms",
     "tool_calls",
+    "selected_probability",
+    "margin",
     "fold",
     "split",
 )
@@ -158,6 +160,7 @@ class ReplayExecutor:
         _validate_policy_fold_binding(
             policy=self.policy,
             fold=fold,
+            tool_budget=self.tool_budget,
             tasks=typed_tasks,
             assignments=assignments,
         )
@@ -546,6 +549,7 @@ def _validate_policy_fold_binding(
     *,
     policy: Policy,
     fold: str,
+    tool_budget: int,
     tasks: Sequence[AgentTask],
     assignments: Mapping[str, Mapping[str, str]],
 ) -> None:
@@ -556,6 +560,12 @@ def _validate_policy_fold_binding(
     if artifact_fold is not None and artifact_fold != fold:
         raise ReplayExecutionError(
             f"Policy artifact is calibrated for fold={artifact_fold!r}, not replay fold={fold!r}"
+        )
+    artifact_budget = configuration.get("budget")
+    if artifact_budget is not None and artifact_budget != tool_budget:
+        raise ReplayExecutionError(
+            "Policy artifact budget does not match replay tool_budget; "
+            f"artifact={artifact_budget!r}, replay={tool_budget!r}"
         )
     artifact_train_seeds = configuration.get("train_seeds")
     for split, artifact_seeds in (

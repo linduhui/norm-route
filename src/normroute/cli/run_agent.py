@@ -15,6 +15,7 @@ from src.normroute.agent.replay_executor import (
 from src.normroute.agent.task_builder import TaskBuildError, read_pre_route_tasks
 from src.normroute.agent.protocol import AgentTask
 from src.normroute.cli.run_stage4_grid import build_training_runtime_records
+from src.normroute.policies.learned import LEARNED_METADATA_POLICY_NAMES
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -49,7 +50,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--policy-artifact",
-        help="Final fold-specific policy_artifact.json for calibrated policies.",
+        help=(
+            "Final fold-specific policy_artifact.json, or model_artifact.json for "
+            "a learned metadata diagnostic."
+        ),
     )
     return parser.parse_args(argv)
 
@@ -64,7 +68,12 @@ def main(argv: list[str] | None = None) -> None:
             policy_kwargs["seed"] = args.seed
         if args.policy == "fastest_expert" and args.expert_cost_card:
             policy_kwargs["cost_card"] = args.expert_cost_card
-        if args.policy in {"category_prior", "category_shot_prior", "cost_aware"}:
+        if args.policy in {
+            "category_prior",
+            "category_shot_prior",
+            "cost_aware",
+            *LEARNED_METADATA_POLICY_NAMES,
+        }:
             if not args.policy_artifact:
                 raise ValueError(
                     f"Policy {args.policy!r} requires --policy-artifact"

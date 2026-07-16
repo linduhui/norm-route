@@ -117,9 +117,10 @@ each seed is used as test exactly once and validation exactly once.
 
 Because this protocol splits support realizations, the same `sample_id` can
 occur with different seeds in different partitions. Identity fields are not
-policy features. Any future learned router must preserve that boundary and may
-use evaluator-only outcomes only from the current fold's training partition;
-validation is for selection and test is for final reporting only.
+policy features. Learned metadata routers preserve a stricter boundary
+described below. They may use evaluator-only outcomes from the current fold's
+training partition to produce run-level best-expert labels; validation is only
+for hyperparameter selection and test is only for final reporting.
 
 ## Manifest and audit schemas
 
@@ -141,6 +142,8 @@ python -m src.normroute.cli.build_stage4_tasks
 python -m src.normroute.cli.build_stage4_splits
 python scripts/calibrate_policy.py --policy category_shot_prior
 python scripts/calibrate_policy.py --policy cost_aware --max-runtime-ms 100
+python scripts/calibrate_policy.py --policy decision_tree_metadata --static-cost-card path/to/static_costs.json
+python scripts/calibrate_policy.py --policy multinomial_logistic_metadata --static-cost-card path/to/static_costs.json
 python -m src.normroute.cli.run_agent --policy always_anomalydino --fold fold0 --split test
 python -m src.normroute.cli.run_agent --policy category_shot_prior --policy-artifact outputs/stage4/policies/category_shot_prior/fold0/policy_artifact.json --fold fold0 --split test
 python -m src.normroute.cli.run_agent --policy cost_aware --policy-artifact outputs/stage4/policies/cost_aware/fold0/policy_artifact.json --fold fold0 --split test
@@ -187,6 +190,32 @@ Calibration writes `cost_quality_frontier.csv` beside the artifact. Its
 runtime values, `route_decisions.estimated_cost_ms`, and copied Stage 2 replay
 runtimes are all marked `runtime_source=estimated_runtime`: they are historical
 estimates, not wall-clock duration measured during the replay.
+
+## Learned metadata diagnostic baselines
+
+`decision_tree_metadata` and `multinomial_logistic_metadata` are lightweight
+diagnostic baselines. They are explicitly **not the final NORM-Route model**.
+Their exhaustive raw feature allowlist is `category`, `k_shot`, configured
+`budget`, and predeclared per-expert `static_cost`. Even though the general
+pre-route task retains `dataset` for earlier rule baselines, `dataset` is not a
+learned-router feature. `seed`, `support_set_id`, `query_path`, task/sample
+identity, and any expert score are denylisted and never enter the encoder.
+
+For each fold, expert quality rows are grouped by run. The training label is
+the expert with the best configured metric on that run; metric ties use the
+frozen candidate-expert order. The train split fits model parameters. The
+validation split selects only `max_depth` for the decision tree or `C` for
+multinomial logistic regression. Test metric cells are skipped before numeric
+parsing and are never hashed. Validation rows are not added to final model
+fitting.
+
+Each successful training bundle contains `feature_manifest.json`,
+`model_artifact.json`, `train_metadata.json`, `validation_predictions.csv`,
+and `failures.json`. Calibration finishes by reloading and validating that
+exact frozen bundle. Test replay requires `--policy-artifact` pointing to its
+`model_artifact.json`; the policy's replay-time `fit` hook cannot update the
+model. The route decision CSV reports `selected_probability`, probability
+`margin` (top-1 minus top-2), and an auditable `decision_reason`.
 
 ## Replay outputs
 

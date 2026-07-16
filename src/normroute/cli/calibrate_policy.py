@@ -1,8 +1,8 @@
-"""Calibrate fold-specific Stage 4 category rule policies.
+"""Calibrate or train fold-specific Stage 4 diagnostic policies.
 
-Only rows assigned to ``train`` in the requested fold are allowed to supply a
-quality metric or runtime.  Validation and test metric cells are deliberately
-left unparsed.
+Rule policies read only train outcomes. Cost-aware and learned policies may
+read validation outcomes solely for frozen hyperparameter selection. Test
+metric cells are always left unparsed.
 """
 
 from __future__ import annotations
@@ -33,6 +33,14 @@ from src.normroute.policies.rule_based import (
     RUNTIME_TIE_BREAK,
     SUPPORTED_METRICS,
     load_rule_policy_artifact,
+)
+from src.normroute.policies.learned import (
+    DEFAULT_LOGISTIC_C_GRID,
+    DEFAULT_STATIC_COST_UNIT,
+    DEFAULT_TREE_MAX_DEPTH_GRID,
+    LEARNED_METADATA_POLICY_NAMES,
+    calibrate_learned_metadata_artifacts,
+    calibrate_learned_metadata_policy,
 )
 
 
@@ -119,7 +127,7 @@ class ManifestFold:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Calibrate fold-specific Stage 4 category priors from train rows only."
+            "Calibrate fold-specific Stage 4 rule, cost-aware, or learned diagnostics."
         )
     )
     parser.add_argument(
@@ -132,7 +140,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--policy",
-        choices=(*RULE_POLICY_NAMES, COST_AWARE_POLICY_NAME),
+        choices=(*RULE_POLICY_NAMES, COST_AWARE_POLICY_NAME, *LEARNED_METADATA_POLICY_NAMES),
         default=CATEGORY_SHOT_PRIOR,
     )
     parser.add_argument(
@@ -170,6 +178,43 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--output-root",
         default="outputs/stage4/policies",
     )
+    parser.add_argument(
+        "--budget",
+        type=int,
+        default=1,
+        help="Configured tool budget used as a metadata feature (learned policies only).",
+    )
+    parser.add_argument(
+        "--static-cost-card",
+        help=(
+            "Predeclared JSON expert static-cost mapping or a cost card with costs_ms "
+            "(learned policies only)."
+        ),
+    )
+    parser.add_argument(
+        "--static-cost-unit",
+        default=DEFAULT_STATIC_COST_UNIT,
+        help="Unit label for learned-router static cost values.",
+    )
+    parser.add_argument(
+        "--tree-max-depth-grid",
+        nargs="+",
+        type=int,
+        help="Decision-tree max_depth candidates; default also includes unlimited depth.",
+    )
+    parser.add_argument(
+        "--logistic-c-grid",
+        nargs="+",
+        type=float,
+        default=list(DEFAULT_LOGISTIC_C_GRID),
+        help="Multinomial logistic C candidates selected on validation.",
+    )
+    parser.add_argument(
+        "--training-seed",
+        type=int,
+        default=0,
+        help="Training provenance seed; never used as a model feature.",
+    )
     return parser.parse_args(argv)
 
 
@@ -186,6 +231,16 @@ def main(argv: list[str] | None = None) -> None:
             runtime_column=args.runtime_column,
             lambda_grid=args.lambda_grid,
             max_runtime_ms=args.max_runtime_ms,
+            budget=args.budget,
+            static_costs=args.static_cost_card,
+            static_cost_unit=args.static_cost_unit,
+            tree_max_depth_grid=(
+                args.tree_max_depth_grid
+                if args.tree_max_depth_grid is not None
+                else DEFAULT_TREE_MAX_DEPTH_GRID
+            ),
+            logistic_c_grid=args.logistic_c_grid,
+            training_seed=args.training_seed,
         )
     except (OSError, PolicyCalibrationError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -205,9 +260,30 @@ def calibrate_policy_artifacts(
     runtime_column: str | None = None,
     lambda_grid: Sequence[float] = DEFAULT_LAMBDA_GRID,
     max_runtime_ms: float | None = None,
+    budget: int = 1,
+    static_costs: Mapping[str, Any] | str | Path | None = None,
+    static_cost_unit: str = DEFAULT_STATIC_COST_UNIT,
+    tree_max_depth_grid: Sequence[int | None] = DEFAULT_TREE_MAX_DEPTH_GRID,
+    logistic_c_grid: Sequence[float] = DEFAULT_LOGISTIC_C_GRID,
+    training_seed: int = 0,
 ) -> list[Path]:
     """Calibrate and write one ``policy_artifact.json`` per requested fold."""
 
+    if policy_name in LEARNED_METADATA_POLICY_NAMES:
+        return calibrate_learned_metadata_artifacts(
+            expert_quality_by_run=expert_quality_by_run,
+            fold_manifest=fold_manifest,
+            output_root=output_root,
+            policy_name=policy_name,
+            metric=metric,
+            folds=folds,
+            budget=budget,
+            static_costs=static_costs,
+            static_cost_unit=static_cost_unit,
+            tree_max_depth_grid=tree_max_depth_grid,
+            logistic_c_grid=logistic_c_grid,
+            training_seed=training_seed,
+        )
     if policy_name == COST_AWARE_POLICY_NAME:
         pairs = calibrate_cost_aware_artifacts(
             expert_quality_by_run=expert_quality_by_run,
@@ -256,9 +332,30 @@ def calibrate_policy(
     runtime_column: str | None = None,
     lambda_grid: Sequence[float] = DEFAULT_LAMBDA_GRID,
     max_runtime_ms: float | None = None,
+    budget: int = 1,
+    static_costs: Mapping[str, Any] | str | Path | None = None,
+    static_cost_unit: str = DEFAULT_STATIC_COST_UNIT,
+    tree_max_depth_grid: Sequence[int | None] = DEFAULT_TREE_MAX_DEPTH_GRID,
+    logistic_c_grid: Sequence[float] = DEFAULT_LOGISTIC_C_GRID,
+    training_seed: int = 0,
 ) -> Path:
     """Convenience API for calibrating exactly one fold to an explicit path."""
 
+    if policy_name in LEARNED_METADATA_POLICY_NAMES:
+        return calibrate_learned_metadata_policy(
+            expert_quality_by_run=expert_quality_by_run,
+            fold_manifest=fold_manifest,
+            fold=fold,
+            output_path=output_path,
+            policy_name=policy_name,
+            metric=metric,
+            budget=budget,
+            static_costs=static_costs,
+            static_cost_unit=static_cost_unit,
+            tree_max_depth_grid=tree_max_depth_grid,
+            logistic_c_grid=logistic_c_grid,
+            training_seed=training_seed,
+        )
     if policy_name == COST_AWARE_POLICY_NAME:
         artifact_path, _ = calibrate_one_cost_aware_policy(
             expert_quality_by_run=expert_quality_by_run,

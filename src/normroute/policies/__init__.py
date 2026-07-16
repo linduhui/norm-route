@@ -49,3 +49,14 @@ __all__ = [
     "load_expert_cost_card",
     "load_rule_policy_artifact",
 ]
+"""Stage 4 routing policies."""
+
+from .learned import (
+    DecisionTreeMetadataPolicy,
+    MultinomialLogisticMetadataPolicy,
+)
+
+__all__ = [
+    "DecisionTreeMetadataPolicy",
+    "MultinomialLogisticMetadataPolicy",
+]

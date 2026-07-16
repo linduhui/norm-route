@@ -30,6 +30,10 @@ from src.normroute.agent.replay_executor import (
 )
 from src.normroute.agent.task_builder import TaskBuildError, read_pre_route_tasks
 from src.normroute.evaluation.export import PREDICTION_COLUMNS
+from src.normroute.policies.learned import (
+    LEARNED_METADATA_POLICY_NAMES,
+    MODEL_ARTIFACT_FILENAME,
+)
 
 
 GRID_PROTOCOL_VERSION = "stage4.baseline_grid.v1"
@@ -455,8 +459,18 @@ def _create_grid_policy(
         return create_policy(name, seed=seed)
     if name == "fastest_expert" and expert_cost_card is not None:
         return create_policy(name, cost_card=expert_cost_card)
-    if name in {"category_prior", "category_shot_prior", "cost_aware"}:
-        artifact = Path(policy_artifact_root) / name / fold / "policy_artifact.json"
+    if name in {
+        "category_prior",
+        "category_shot_prior",
+        "cost_aware",
+        *LEARNED_METADATA_POLICY_NAMES,
+    }:
+        artifact_name = (
+            MODEL_ARTIFACT_FILENAME
+            if name in LEARNED_METADATA_POLICY_NAMES
+            else "policy_artifact.json"
+        )
+        artifact = Path(policy_artifact_root) / name / fold / artifact_name
         if not artifact.is_file():
             raise Stage4GridError(
                 f"Final policy artifact does not exist for policy={name!r}, "
