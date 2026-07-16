@@ -44,11 +44,9 @@ from .replay_executor import (
 LIVE_PROTOCOL_VERSION = "stage4.live.v1"
 ACTUAL_RUNTIME_SOURCE = "actual_runtime"
 AGENT_INPUT_COLUMNS = ("image_id", "dataset", "category", "split", "image_path")
-LIVE_SELECTED_PREDICTION_COLUMNS = (
-    *SELECTED_PREDICTION_COLUMNS,
-    "estimated_runtime_ms",
-    "actual_runtime_ms",
-)
+# Live and replay deliberately share one exact selected-prediction schema.
+# Runtime values differ by source, not by column layout.
+LIVE_SELECTED_PREDICTION_COLUMNS = SELECTED_PREDICTION_COLUMNS
 LIVE_EXECUTION_COLUMNS = (
     "task_id",
     "fold",
@@ -901,4 +899,3 @@ def _same_int(value: Any, expected: int) -> bool:
         return int(value) == expected
     except (TypeError, ValueError):
         return False
-

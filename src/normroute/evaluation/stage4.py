@@ -38,8 +38,6 @@ STAGE4_METRIC_COLUMNS = (
 )
 EVALUATED_SAMPLE_COLUMNS = (
     *SELECTED_PREDICTION_COLUMNS,
-    "estimated_runtime_ms",
-    "actual_runtime_ms",
     "label",
 )
 _EVALUATOR_REQUIRED_COLUMNS = ("image_id", "label")

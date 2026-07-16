@@ -245,3 +245,12 @@ captures the complete replay config, seeds, git commit, environment, and input
 hashes. Missing Stage 2 runs, missing/duplicate prediction matches, failed
 predictions, mixed-expert Stage 2 run files, and budget violations are recorded
 as explicit task failures; none are silently skipped.
+
+Schema parity between replay and live execution applies to the two shared core
+exchange files: `route_decisions.csv` and `selected_predictions.csv`. Both
+modes use the canonical `selected_predictions.csv` columns
+`estimated_runtime_ms` and `actual_runtime_ms`. Replay fills the historical
+Stage 2 runtime into `estimated_runtime_ms` and leaves `actual_runtime_ms`
+empty; live execution records its route estimate and measured subprocess
+runtime respectively. Mode-specific provenance, budget summaries, execution
+logs, and evaluator-only artifacts may use different schemas.

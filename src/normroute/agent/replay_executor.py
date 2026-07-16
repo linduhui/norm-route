@@ -67,6 +67,8 @@ SELECTED_PREDICTION_COLUMNS = (
     "stage2_run_dir",
     "runtime_source",
     *PREDICTION_COLUMNS,
+    "estimated_runtime_ms",
+    "actual_runtime_ms",
 )
 ESTIMATED_RUNTIME_SOURCE = "estimated_runtime"
 ALLOWED_SPLITS = frozenset({"train", "val", "test"})
@@ -208,6 +210,10 @@ class ReplayExecutor:
                         # estimate.  It is not wall-clock time of this replay.
                         "runtime_source": ESTIMATED_RUNTIME_SOURCE,
                         **{column: prediction.get(column, "") for column in PREDICTION_COLUMNS},
+                        "estimated_runtime_ms": prediction.get("runtime_ms", ""),
+                        # Replay does not launch the expert, so there is no
+                        # current wall-clock runtime to report.
+                        "actual_runtime_ms": "",
                     }
                 )
                 if prediction["status"].lower() != "ok":

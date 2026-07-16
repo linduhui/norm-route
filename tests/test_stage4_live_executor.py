@@ -10,6 +10,7 @@ from src.normroute.agent.live_executor import (
 )
 from src.normroute.agent.policy import AlwaysAnomalyDINOPolicy
 from src.normroute.agent.protocol import AgentTask
+from src.normroute.agent.replay_executor import SELECTED_PREDICTION_COLUMNS
 from src.normroute.evaluation import stage4 as stage4_evaluation
 from src.normroute.evaluation.export import PREDICTION_COLUMNS
 
@@ -119,6 +120,12 @@ def _prediction() -> dict[str, object]:
         "status": "ok",
         "error_message": "",
     }
+
+
+def test_live_and_replay_use_identical_selected_prediction_schema() -> None:
+    assert tuple(LIVE_SELECTED_PREDICTION_COLUMNS) == tuple(
+        SELECTED_PREDICTION_COLUMNS
+    )
 
 
 def test_live_executor_mock_subprocess_smoke_and_evaluator_order(
@@ -252,4 +259,3 @@ def test_live_executor_records_nonzero_subprocess_once(tmp_path: Path) -> None:
     assert failure["returncode"] == 7
     assert Path(failure["stdout_log"]).read_text(encoding="utf-8") == "partial stdout\n"
     assert Path(failure["stderr_log"]).read_text(encoding="utf-8") == "expert crashed\n"
-
