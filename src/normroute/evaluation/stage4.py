@@ -31,11 +31,15 @@ STAGE4_METRIC_COLUMNS = (
     "f1",
     "estimated_runtime_ms",
     "average_estimated_runtime_ms",
+    "actual_runtime_ms",
+    "average_actual_runtime_ms",
     "tool_calls",
     "average_tool_calls",
 )
 EVALUATED_SAMPLE_COLUMNS = (
     *SELECTED_PREDICTION_COLUMNS,
+    "estimated_runtime_ms",
+    "actual_runtime_ms",
     "label",
 )
 _EVALUATOR_REQUIRED_COLUMNS = ("image_id", "label")
@@ -140,12 +144,17 @@ def write_stage4_evaluation(
             "warnings": result.warnings,
         },
     )
+    runtime_sources = sorted(
+        {row.get("runtime_source", "estimated_runtime") for row in result.evaluated_rows}
+    )
     config = {
         "protocol_version": STAGE4_EVALUATION_VERSION,
         "selected_predictions": [str(path) for path in selected_paths],
         "evaluator_csv": str(evaluator_csv),
         "f1_source": "saved_final_decision",
-        "runtime_source": "estimated_runtime",
+        "runtime_source": (
+            runtime_sources[0] if len(runtime_sources) == 1 else "mixed"
+        ),
     }
     _write_json(config_path, config)
     _write_json(
@@ -224,9 +233,12 @@ def _compute_group_metrics(
     else:
         auroc = compute_auroc(labels, scores)
         ap = compute_average_precision(labels, scores)
-    # Replay reuses historical Stage 2 runtime as an estimate; it does not
-    # measure the current replay's wall-clock duration.
-    runtime_ms = sum(float(row["runtime_ms"]) for row in rows)
+    estimated_runtimes = [
+        _row_runtime(row, source="estimated_runtime") for row in rows
+    ]
+    actual_runtimes = [_row_runtime(row, source="actual_runtime") for row in rows]
+    estimated_runtime_ms = _complete_runtime_total(estimated_runtimes)
+    actual_runtime_ms = _complete_runtime_total(actual_runtimes)
     tool_calls = sum(int(row["tool_calls"]) for row in rows)
     return {
         "policy_name": key[0],
@@ -238,8 +250,16 @@ def _compute_group_metrics(
         "auroc": auroc,
         "ap": ap,
         "f1": _binary_f1(labels, decisions),
-        "estimated_runtime_ms": runtime_ms,
-        "average_estimated_runtime_ms": runtime_ms / num_samples,
+        "estimated_runtime_ms": estimated_runtime_ms,
+        "average_estimated_runtime_ms": (
+            estimated_runtime_ms / num_samples
+            if estimated_runtime_ms is not None
+            else None
+        ),
+        "actual_runtime_ms": actual_runtime_ms,
+        "average_actual_runtime_ms": (
+            actual_runtime_ms / num_samples if actual_runtime_ms is not None else None
+        ),
         "tool_calls": tool_calls,
         "average_tool_calls": tool_calls / num_samples,
     }
@@ -298,12 +318,38 @@ def _read_selected_predictions(path: str | Path) -> list[dict[str, str]]:
             if empty:
                 raise Stage4EvaluationError(f"{source}:{line_number} has empty values: {empty}")
             runtime_source = clean.get("runtime_source")
-            if runtime_source and runtime_source != "estimated_runtime":
+            if not runtime_source:
+                # Backward compatibility for early replay artifacts whose
+                # runtime_source column was present but blank.
+                runtime_source = "estimated_runtime"
+                clean["runtime_source"] = runtime_source
+            if runtime_source not in {"estimated_runtime", "actual_runtime"}:
                 raise Stage4EvaluationError(
-                    f"{source}:{line_number} runtime_source must be 'estimated_runtime'"
+                    f"{source}:{line_number} runtime_source must be 'estimated_runtime' "
+                    "or 'actual_runtime'"
                 )
             rows.append(clean)
     return rows
+
+
+def _row_runtime(row: Mapping[str, Any], *, source: str) -> float | None:
+    explicit_field = (
+        "estimated_runtime_ms" if source == "estimated_runtime" else "actual_runtime_ms"
+    )
+    explicit = str(row.get(explicit_field, "")).strip()
+    if explicit:
+        return _finite_nonnegative(explicit, explicit_field, str(row.get("task_id", "")))
+    if row.get("runtime_source") == source:
+        return _finite_nonnegative(
+            str(row["runtime_ms"]), "runtime_ms", str(row.get("task_id", ""))
+        )
+    return None
+
+
+def _complete_runtime_total(values: Sequence[float | None]) -> float | None:
+    if not values or any(value is None for value in values):
+        return None
+    return sum(value for value in values if value is not None)
 
 
 def _read_evaluator_labels(path: str | Path) -> dict[str, str]:
