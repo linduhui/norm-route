@@ -15,17 +15,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.normroute.evaluation.export import export_run_outputs
-from src.normroute.experts.base import (
+from ..evaluation.export import export_run_outputs
+from ..experts.base import (
     DummyExpert,
     Expert,
     ExpertInput,
     ExpertPrediction,
     validate_expert_input_fields,
 )
-from src.normroute.experts.anomalydino import AnomalyDINOConfig, AnomalyDINOExpert
-from src.normroute.experts.patchcore import PatchCoreExpert
-from src.normroute.experts.winclip import WinCLIPConfig, WinCLIPExpert
+from ..experts.anomalydino import AnomalyDINOConfig, AnomalyDINOExpert
+from ..experts.patchcore import PatchCoreExpert
+from ..experts.winclip import WinCLIPConfig, WinCLIPExpert
 
 
 AGENT_COLUMNS = ["image_id", "dataset", "category", "split", "image_path"]

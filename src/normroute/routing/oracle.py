@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from src.normroute.routing.join_predictions import RoutingMatrixError
-from src.normroute.routing.quality_metrics import (
+from .join_predictions import RoutingMatrixError
+from .quality_metrics import (
     GROUP_COLUMNS,
     QualityMetricError,
     compute_group_metrics,

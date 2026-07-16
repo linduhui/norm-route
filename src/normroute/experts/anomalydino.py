@@ -11,13 +11,13 @@ from typing import Any
 
 from PIL import Image, ImageFilter, ImageStat
 
-from src.normroute.experts.base import (
+from .base import (
     Expert,
     ExpertInput,
     ExpertPrediction,
     validate_expert_input_fields,
 )
-from src.normroute.experts.winclip import _parse_simple_yaml
+from .winclip import _parse_simple_yaml
 
 
 @dataclass(frozen=True)

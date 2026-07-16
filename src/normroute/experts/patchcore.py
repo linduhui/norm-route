@@ -9,7 +9,7 @@ import time
 
 from PIL import Image, ImageStat
 
-from src.normroute.experts.base import (
+from .base import (
     Expert,
     ExpertInput,
     ExpertPrediction,

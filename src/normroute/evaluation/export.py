@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from src.normroute.experts.base import ExpertPrediction
+from ..experts.base import ExpertPrediction
 
 
 PREDICTION_COLUMNS = [

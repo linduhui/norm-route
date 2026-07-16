@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable
 
-from src.normroute.routing.oracle import OracleError, ensure_oracle_output, read_expert_quality_by_run
-from src.normroute.routing.quality_metrics import read_routing_matrix_long, write_csv
+from .oracle import OracleError, ensure_oracle_output, read_expert_quality_by_run
+from .quality_metrics import read_routing_matrix_long, write_csv
 
 
 COMPLEMENTARITY_COLUMNS = (

@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.normroute.cli.run_expert import SUPPORT_COLUMNS, _read_csv, run_expert
+from .run_expert import SUPPORT_COLUMNS, _read_csv, run_expert
 
 
 RESULT_FILES = ("predictions.csv", "metrics.json", "failures.json")

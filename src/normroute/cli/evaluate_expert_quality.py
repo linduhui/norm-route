@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.normroute.routing.quality_metrics import (
+from ..routing.quality_metrics import (
     QualityMetricError,
     evaluate_expert_quality,
     write_expert_quality_outputs,

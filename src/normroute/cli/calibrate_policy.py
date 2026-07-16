@@ -18,14 +18,14 @@ import subprocess
 import sys
 from typing import Any, Iterable, Mapping, Sequence
 
-from src.normroute.agent.protocol import CANDIDATE_EXPERTS
-from src.normroute.policies.cost_aware import (
+from ..agent.protocol import CANDIDATE_EXPERTS
+from ..policies.cost_aware import (
     COST_AWARE_POLICY_NAME,
     DEFAULT_LAMBDA_GRID,
     calibrate_cost_aware_artifacts,
     calibrate_cost_aware_policy as calibrate_one_cost_aware_policy,
 )
-from src.normroute.policies.rule_based import (
+from ..policies.rule_based import (
     CATEGORY_PRIOR,
     CATEGORY_SHOT_PRIOR,
     RULE_POLICY_NAMES,
@@ -34,7 +34,7 @@ from src.normroute.policies.rule_based import (
     SUPPORTED_METRICS,
     load_rule_policy_artifact,
 )
-from src.normroute.policies.learned import (
+from ..policies.learned import (
     DEFAULT_LOGISTIC_C_GRID,
     DEFAULT_STATIC_COST_UNIT,
     DEFAULT_TREE_MAX_DEPTH_GRID,

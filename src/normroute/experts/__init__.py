@@ -1,6 +1,6 @@
 """Expert interfaces and minimal expert implementations."""
 
-from src.normroute.experts.base import (
+from .base import (
     DummyExpert,
     Expert,
     ExpertInput,
@@ -8,9 +8,9 @@ from src.normroute.experts.base import (
     FORBIDDEN_EXPERT_INPUT_FIELDS,
     validate_expert_input_fields,
 )
-from src.normroute.experts.anomalydino import AnomalyDINOConfig, AnomalyDINOExpert
-from src.normroute.experts.patchcore import PatchCoreConfig, PatchCoreExpert
-from src.normroute.experts.winclip import WinCLIPConfig, WinCLIPExpert
+from .anomalydino import AnomalyDINOConfig, AnomalyDINOExpert
+from .patchcore import PatchCoreConfig, PatchCoreExpert
+from .winclip import WinCLIPConfig, WinCLIPExpert
 
 __all__ = [
     "DummyExpert",

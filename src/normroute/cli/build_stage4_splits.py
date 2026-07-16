@@ -13,8 +13,8 @@ import subprocess
 import sys
 from typing import Any, Mapping
 
-from src.normroute.agent.protocol import POLICY_FEATURE_ALLOWLIST, PROVENANCE_FIELDS
-from src.normroute.agent.task_builder import TaskBuildError, read_pre_route_tasks
+from ..agent.protocol import POLICY_FEATURE_ALLOWLIST, PROVENANCE_FIELDS
+from ..agent.task_builder import TaskBuildError, read_pre_route_tasks
 
 
 SEED_CV_PROTOCOL_VERSION = "stage4.seed_cv.v1"

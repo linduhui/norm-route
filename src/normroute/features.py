@@ -14,7 +14,7 @@ import math
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from src.normroute.agent.protocol import CANDIDATE_EXPERTS
+from .agent.protocol import CANDIDATE_EXPERTS
 
 
 METADATA_FEATURE_PROTOCOL_VERSION = "stage4.metadata_features.v1"

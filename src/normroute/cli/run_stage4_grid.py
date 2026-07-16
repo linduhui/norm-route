@@ -17,10 +17,10 @@ import sys
 import traceback
 from typing import Any, Mapping, Sequence
 
-from src.normroute.agent.policy import Policy
-from src.normroute.agent.policy_registry import create_policy, list_policies
-from src.normroute.agent.protocol import AgentTask, CANDIDATE_EXPERTS
-from src.normroute.agent.replay_executor import (
+from ..agent.policy import Policy
+from ..agent.policy_registry import create_policy, list_policies
+from ..agent.protocol import AgentTask, CANDIDATE_EXPERTS
+from ..agent.replay_executor import (
     ROUTE_DECISION_COLUMNS,
     SELECTED_PREDICTION_COLUMNS,
     ReplayExecutionError,
@@ -28,9 +28,9 @@ from src.normroute.agent.replay_executor import (
     execute_replay,
     read_fold_manifest,
 )
-from src.normroute.agent.task_builder import TaskBuildError, read_pre_route_tasks
-from src.normroute.evaluation.export import PREDICTION_COLUMNS
-from src.normroute.policies.learned import (
+from ..agent.task_builder import TaskBuildError, read_pre_route_tasks
+from ..evaluation.export import PREDICTION_COLUMNS
+from ..policies.learned import (
     LEARNED_METADATA_POLICY_NAMES,
     MODEL_ARTIFACT_FILENAME,
 )

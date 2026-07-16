@@ -7,18 +7,18 @@ from typing import Any
 from types import MappingProxyType
 
 from .policy import AlwaysAnomalyDINOPolicy, Policy
-from src.normroute.policies.fixed import (
+from ..policies.fixed import (
     AlwaysPatchCorePolicy,
     AlwaysWinCLIPPolicy,
     FastestExpertPolicy,
     RandomSeededPolicy,
 )
-from src.normroute.policies.cost_aware import CostAwarePolicy
-from src.normroute.policies.rule_based import (
+from ..policies.cost_aware import CostAwarePolicy
+from ..policies.rule_based import (
     CategoryPriorPolicy,
     CategoryShotPriorPolicy,
 )
-from src.normroute.policies.learned import (
+from ..policies.learned import (
     DecisionTreeMetadataPolicy,
     MultinomialLogisticMetadataPolicy,
 )

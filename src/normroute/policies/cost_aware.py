@@ -19,8 +19,8 @@ from pathlib import Path
 import subprocess
 from typing import Any, Iterable, Mapping, Sequence
 
-from src.normroute.agent.policy import Policy, TrainRecord
-from src.normroute.agent.protocol import AgentTask, CANDIDATE_EXPERTS, RouteDecision
+from ..agent.policy import Policy, TrainRecord
+from ..agent.protocol import AgentTask, CANDIDATE_EXPERTS, RouteDecision
 
 
 COST_AWARE_POLICY_NAME = "cost_aware"

@@ -13,8 +13,8 @@ from pathlib import Path
 import math
 from typing import Any, Mapping, Sequence
 
-from src.normroute.agent.policy import Policy, TrainRecord
-from src.normroute.agent.protocol import AgentTask, CANDIDATE_EXPERTS, RouteDecision
+from ..agent.policy import Policy, TrainRecord
+from ..agent.protocol import AgentTask, CANDIDATE_EXPERTS, RouteDecision
 
 
 RULE_POLICY_PROTOCOL_VERSION = "stage4.rule_policy.v1"

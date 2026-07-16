@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from src.normroute.evaluation.stage4_summary import (
+from ..evaluation.stage4_summary import (
     Stage4SummaryError,
     discover_selected_predictions,
     summarize_stage4,

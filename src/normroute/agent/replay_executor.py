@@ -15,7 +15,7 @@ import subprocess
 import sys
 from typing import Any, Mapping, Sequence
 
-from src.normroute.evaluation.export import PREDICTION_COLUMNS
+from ..evaluation.export import PREDICTION_COLUMNS
 
 from .policy import Policy, TrainRecord
 from .protocol import (

@@ -23,7 +23,7 @@ import subprocess
 import sys
 from typing import Any, Iterable, Mapping, Sequence
 
-from src.normroute.routing.quality_metrics import compute_average_precision, compute_auroc
+from ..routing.quality_metrics import compute_average_precision, compute_auroc
 
 
 STAGE4_SUMMARY_VERSION = "stage4.evaluator_summary.v1"

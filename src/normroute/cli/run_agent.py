@@ -6,17 +6,17 @@ import argparse
 from pathlib import Path
 import sys
 
-from src.normroute.agent.policy_registry import create_policy, list_policies
-from src.normroute.agent.live_executor import LiveExecutionError, execute_live
-from src.normroute.agent.replay_executor import (
+from ..agent.policy_registry import create_policy, list_policies
+from ..agent.live_executor import LiveExecutionError, execute_live
+from ..agent.replay_executor import (
     ReplayExecutionError,
     execute_replay,
     read_fold_manifest,
 )
-from src.normroute.agent.task_builder import TaskBuildError, read_pre_route_tasks
-from src.normroute.agent.protocol import AgentTask
-from src.normroute.cli.run_stage4_grid import build_training_runtime_records
-from src.normroute.policies.learned import LEARNED_METADATA_POLICY_NAMES
+from ..agent.task_builder import TaskBuildError, read_pre_route_tasks
+from ..agent.protocol import AgentTask
+from .run_stage4_grid import build_training_runtime_records
+from ..policies.learned import LEARNED_METADATA_POLICY_NAMES
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

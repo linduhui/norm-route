@@ -14,8 +14,8 @@ import subprocess
 import sys
 from typing import Any, Mapping, Sequence
 
-from src.normroute.agent.replay_executor import SELECTED_PREDICTION_COLUMNS
-from src.normroute.routing.quality_metrics import compute_auroc, compute_average_precision
+from ..agent.replay_executor import SELECTED_PREDICTION_COLUMNS
+from ..routing.quality_metrics import compute_auroc, compute_average_precision
 
 
 STAGE4_EVALUATION_VERSION = "stage4.evaluator_only.v1"

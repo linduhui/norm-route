@@ -12,17 +12,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.normroute.routing.complementarity import (
+from ..routing.complementarity import (
     compute_complementarity_summary,
     write_complementarity_summary,
 )
-from src.normroute.routing.oracle import (
+from ..routing.oracle import (
     OracleError,
     compute_oracle_outputs,
     write_oracle_outputs,
 )
-from src.normroute.routing.join_predictions import RoutingMatrixError
-from src.normroute.routing.quality_metrics import QualityMetricError
+from ..routing.join_predictions import RoutingMatrixError
+from ..routing.quality_metrics import QualityMetricError
 
 
 def parse_args() -> argparse.Namespace:

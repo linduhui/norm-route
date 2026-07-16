@@ -20,9 +20,9 @@ import subprocess
 import sys
 from typing import Any, Iterable, Mapping, Sequence
 
-from src.normroute.agent.policy import Policy, TrainRecord
-from src.normroute.agent.protocol import AgentTask, CANDIDATE_EXPERTS, RouteDecision
-from src.normroute.features import (
+from ..agent.policy import Policy, TrainRecord
+from ..agent.protocol import AgentTask, CANDIDATE_EXPERTS, RouteDecision
+from ..features import (
     MetadataFeatureError,
     build_metadata_feature_record,
     canonical_static_costs,

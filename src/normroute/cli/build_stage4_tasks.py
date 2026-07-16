@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 import sys
 
-from src.normroute.agent.task_builder import TaskBuildError, build_pre_route_tasks
+from ..agent.task_builder import TaskBuildError, build_pre_route_tasks
 
 
 DEFAULT_SOURCE = "outputs/stage3/routing_matrix/agent_routing_tasks.jsonl"

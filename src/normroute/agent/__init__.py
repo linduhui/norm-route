@@ -16,7 +16,7 @@ from .protocol import (
     validate_route_decision,
 )
 from .policy import AlwaysAnomalyDinoPolicy, AlwaysAnomalyDINOPolicy, Policy
-from src.normroute.policies.fixed import (
+from ..policies.fixed import (
     AlwaysPatchCorePolicy,
     AlwaysWinCLIPPolicy,
     FastestExpertPolicy,

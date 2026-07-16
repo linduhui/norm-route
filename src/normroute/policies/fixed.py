@@ -16,8 +16,8 @@ import random
 import re
 from typing import Any, Mapping, Sequence
 
-from src.normroute.agent.policy import AlwaysAnomalyDINOPolicy, Policy, TrainRecord
-from src.normroute.agent.protocol import AgentTask, CANDIDATE_EXPERTS, RouteDecision
+from ..agent.policy import AlwaysAnomalyDINOPolicy, Policy, TrainRecord
+from ..agent.protocol import AgentTask, CANDIDATE_EXPERTS, RouteDecision
 
 
 EXPERT_COST_CARD_VERSION = "stage4.expert_cost_card.v1"

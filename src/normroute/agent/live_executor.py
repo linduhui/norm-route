@@ -15,8 +15,8 @@ import sys
 import time
 from typing import Any, Callable, Mapping, Sequence
 
-from src.normroute.evaluation import stage4 as stage4_evaluation
-from src.normroute.evaluation.export import PREDICTION_COLUMNS
+from ..evaluation import stage4 as stage4_evaluation
+from ..evaluation.export import PREDICTION_COLUMNS
 
 from .policy import Policy, TrainRecord
 from .protocol import AgentTask, CANDIDATE_EXPERTS, RouteDecision, validate_route_decision

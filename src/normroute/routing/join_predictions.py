@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from src.normroute.evaluation.export import PREDICTION_COLUMNS
+from ..evaluation.export import PREDICTION_COLUMNS
 
 
 REQUIRED_RUN_FILES = (
