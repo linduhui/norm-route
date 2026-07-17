@@ -196,6 +196,7 @@ class LiveExecutor:
 
         for task in selected_tasks:
             decision: RouteDecision | None = None
+            invocation: _Invocation | None = None
             task_output_dir: Path | None = None
             stdout_log: Path | None = None
             stderr_log: Path | None = None
@@ -306,6 +307,12 @@ class LiveExecutor:
                 failure.update(
                     {
                         "returncode": exc.returncode,
+                        "estimated_runtime_ms": (
+                            decision.estimated_cost_ms if decision is not None else None
+                        ),
+                        "actual_runtime_ms": (
+                            invocation.actual_runtime_ms if invocation is not None else None
+                        ),
                         "stdout_log": str(stdout_log or ""),
                         "stderr_log": str(stderr_log or ""),
                     }
@@ -318,6 +325,12 @@ class LiveExecutor:
                 failure.update(
                     {
                         "returncode": None,
+                        "estimated_runtime_ms": (
+                            decision.estimated_cost_ms if decision is not None else None
+                        ),
+                        "actual_runtime_ms": (
+                            invocation.actual_runtime_ms if invocation is not None else None
+                        ),
                         "stdout_log": str(stdout_log or ""),
                         "stderr_log": str(stderr_log or ""),
                     }
@@ -630,11 +643,13 @@ class LiveExecutor:
             "num_tasks": num_tasks,
             "num_decisions": len(decisions),
             "num_expert_calls": len(executions),
+            "actual_expert_calls": len(executions),
             "num_selected_predictions": len(selected_rows),
             "num_budget_failures": budget_failures,
             "total_tool_call_budget": total_budget,
             "planned_tool_calls": planned,
             "actual_tool_calls": actual_tool_calls,
+            "actual_prediction_tool_calls": actual_tool_calls,
             "planned_estimated_runtime_ms": sum(
                 float(row["estimated_cost_ms"]) for row in decisions
             ),

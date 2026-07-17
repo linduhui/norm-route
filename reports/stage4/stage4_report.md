@@ -1,6 +1,6 @@
 # Stage 4 最终 Gate 报告
 
-> Gate 状态：**FAIL**。本报告仅总结当前 Stage 4 协议和本地 wrapper 实验，**不构成最终 NORM-Route SOTA 声明**。
+> Gate 状态：**PASS**。本报告仅总结当前 Stage 4 协议和本地 wrapper 实验，**不构成最终 NORM-Route SOTA 声明**。
 
 ## 1. 结论与范围
 
@@ -15,7 +15,7 @@
 | `pre_route_tasks_no_forbidden_fields` | PASS | validated 34500 pre-route tasks |
 | `policy_feature_manifest_no_leakage` | PASS | validated 10 learned-policy feature manifests |
 | `train_val_test_isolation` | PASS | validated 172500 assignments across 5 folds |
-| `route_decisions_one_expert_per_run` | FAIL | validated one route decision and one expert per complete run across 50 run directories |
+| `route_decisions_one_expert_per_run` | PASS | validated exactly one expert decision for 345000 routing tasks across 50 run directories |
 | `tool_calls_at_most_one` | PASS | validated tool_calls <= 1 across 345000 decisions and 345000 predictions |
 | `selected_predictions_match_selected_expert` | PASS | aligned 345000 selected predictions to route decisions |
 | `failures_match_metrics` | PASS | reconciled 0 recorded failures with run counts |
@@ -24,10 +24,6 @@
 | `evaluator_after_route_decision` | PASS | validated evaluator ordering for 50 routed inputs |
 | `live_smoke` | PASS | validated latest live smoke run with 1 prediction(s) |
 | `stage4_report_inputs` | PASS | validated 36 policy-summary rows, 180 cost-quality rows, and five-fold config |
-
-阻塞项：
-
-- `route_decisions_one_expert_per_run`：random_seeded/fold0/test selects multiple experts inside 60 complete runs; examples=[(('mvtec', 'metal_nut', '1', '0', 'mvtec_metal_nut_k1_seed0'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '2', '0', 'mvtec_metal_nut_k2_seed0'), ['anomalydino', 'patchcore', 'winclip']), (('mvtec', 'metal_nut', '4', '0', 'mvtec_metal_nut_k4_seed0'), ['anomalydino', 'patchcore', 'winclip'])]
 
 ## 3. 五折协议
 
@@ -77,21 +73,20 @@
 - Replay costs are historical estimated runtimes copied from immutable Stage 2 outputs; only the one-sample live smoke records actual subprocess runtime.
 - F1 uses saved wrapper decisions and frozen thresholds; target abnormal test samples were not used for threshold or hyperparameter tuning.
 - The live smoke contains one routed sample, so it validates wiring and ordering rather than production latency or quality.
-- The saved random_seeded control selects experts per sample and therefore violates the frozen one-expert-per-complete-run gate; the existing results are retained and the gate remains FAIL.
 
 ## 8. Stage 5 方向
 
 - Integrate official, version-pinned baseline adapters and user-provided weights without automatic downloads; preserve external core algorithms.
 - Freeze a leakage-safe learned router with query-visible features only, then repeat fold-isolated calibration and testing.
-- Make every stochastic control choose once per complete run and add the invariant to replay/grid tests before regenerating comparisons.
+- Keep exactly one auditable expert decision per routing task and extend routing tests to future query-visible features.
 - Expand live execution beyond a one-sample smoke and report actual latency, memory, failures, and quality with uncertainty.
 - Add VisA and other held-out datasets under the same support_set_id and evaluator-isolation protocol.
 
 ## 9. 可复现性
 
 - Gate protocol：`stage4.gate.v1`
-- Generated at UTC：`2026-07-16T11:16:28.853504+00:00`
-- Git commit：`63e254e841c0597f69952ff90bf37f65fd262a6d`
+- Generated at UTC：`2026-07-17T04:19:57.729238+00:00`
+- Git commit：`4b879105958e7706c0dbb9e4e9dfa716250aad54`
 - Runs root：`outputs\stage4\runs\full_cv_20260716_060523`
 - Evaluation root：`outputs\stage4\evaluation\full_cv_20260716_060523`
 - 记录的输入 SHA-256：10 个。

@@ -2,6 +2,9 @@ import csv
 import json
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
+
+import pytest
 
 from src.normroute.agent.live_executor import (
     LIVE_EXECUTION_COLUMNS,
@@ -11,6 +14,7 @@ from src.normroute.agent.live_executor import (
 from src.normroute.agent.policy import AlwaysAnomalyDINOPolicy
 from src.normroute.agent.protocol import AgentTask
 from src.normroute.agent.replay_executor import SELECTED_PREDICTION_COLUMNS
+from src.normroute.cli import run_agent as run_agent_cli
 from src.normroute.evaluation import stage4 as stage4_evaluation
 from src.normroute.evaluation.export import PREDICTION_COLUMNS
 
@@ -189,6 +193,21 @@ def test_live_executor_mock_subprocess_smoke_and_evaluator_order(
     )
 
     assert len(calls) == 1
+    command = calls[0]
+    assert command[command.index("--dataset") + 1] == "mvtec"
+    assert command[command.index("--category") + 1] == "bottle"
+    assert command[command.index("--k-shot") + 1] == "1"
+    assert command[command.index("--seed") + 1] == "0"
+    assert (
+        command[command.index("--support-set-id") + 1]
+        == "mvtec_bottle_k1_seed0"
+    )
+    assert Path(command[command.index("--support-set-csv") + 1]) == (
+        tmp_path / "data" / "support_sets" / "mvtec_k1_seed0.csv"
+    )
+    assert Path(command[command.index("--output-dir") + 1]).parent.name == (
+        "expert_runs"
+    )
     assert result.num_tasks == 1
     assert result.num_selected_predictions == 1
     assert result.num_failures == 0
@@ -257,5 +276,63 @@ def test_live_executor_records_nonzero_subprocess_once(tmp_path: Path) -> None:
     failure = failures["failed_tasks"][0]
     assert failure["failure_type"] == "expert_subprocess_failed"
     assert failure["returncode"] == 7
+    assert failure["estimated_runtime_ms"] == 0.0
+    assert failure["actual_runtime_ms"] == pytest.approx(100.0)
     assert Path(failure["stdout_log"]).read_text(encoding="utf-8") == "partial stdout\n"
     assert Path(failure["stderr_log"]).read_text(encoding="utf-8") == "expert crashed\n"
+
+    budget = json.loads(result.budget_summary_path.read_text(encoding="utf-8"))
+    assert budget["actual_expert_calls"] == 1
+    assert budget["actual_prediction_tool_calls"] == 0
+
+
+def test_run_agent_live_mode_dispatches_to_live_executor(
+    tmp_path: Path, monkeypatch
+) -> None:
+    task = _task()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(run_agent_cli, "read_pre_route_tasks", lambda path: [task])
+    monkeypatch.setattr(run_agent_cli, "read_fold_manifest", lambda path: _manifest(task))
+
+    def fake_execute_live(**kwargs):
+        captured.update(kwargs)
+        artifact = tmp_path / "artifact"
+        return SimpleNamespace(
+            route_decisions_path=artifact,
+            selected_predictions_path=artifact,
+            failures_path=artifact,
+            run_metadata_path=artifact,
+            budget_summary_path=artifact,
+            live_executions_path=artifact,
+            stdout_path=artifact,
+            stderr_path=artifact,
+            evaluation_paths={},
+            evaluation_failure_path=None,
+            num_failures=0,
+            num_evaluation_failures=0,
+        )
+
+    monkeypatch.setattr(run_agent_cli, "execute_live", fake_execute_live)
+    output_dir = tmp_path / "live-output"
+    run_agent_cli.main(
+        [
+            "--mode",
+            "live",
+            "--policy",
+            "always_anomalydino",
+            "--data-root",
+            str(tmp_path / "data"),
+            "--output-dir",
+            str(output_dir),
+            "--fold",
+            "fold0",
+            "--split",
+            "test",
+        ]
+    )
+
+    assert captured["data_root"] == str(tmp_path / "data")
+    assert captured["output_dir"] == str(output_dir)
+    assert captured["fold"] == "fold0"
+    assert captured["split"] == "test"

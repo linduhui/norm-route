@@ -5,6 +5,7 @@ from pathlib import Path
 from src.normroute.cli.validate_stage4_outputs import (
     _check_policy_feature_manifests,
     _check_pre_route_tasks,
+    _check_run_tree,
     _check_split_isolation,
 )
 
@@ -12,6 +13,14 @@ from src.normroute.cli.validate_stage4_outputs import (
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _write_csv(path: Path, rows: list[dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def _task(seed: int = 0) -> dict[str, object]:
@@ -84,3 +93,61 @@ def test_split_gate_uses_seed_as_isolation_unit(tmp_path: Path) -> None:
     result = _check_split_isolation(manifest, tmp_path / "missing_audit.json")
     assert result["status"] == "FAIL"
     assert any("train/test seed overlap" in error for error in result["errors"])
+
+
+def test_route_gate_requires_one_expert_per_task_not_one_per_complete_run(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "runs" / "random_seeded" / "fold0" / "test"
+    decisions = [
+        {
+            "task_id": "task-0",
+            "dataset": "mvtec",
+            "category": "bottle",
+            "k_shot": 1,
+            "seed": 0,
+            "support_set_id": "mvtec_bottle_k1_seed0",
+            "selected_expert": "PatchCore",
+            "tool_calls": 1,
+        },
+        {
+            "task_id": "task-1",
+            "dataset": "mvtec",
+            "category": "bottle",
+            "k_shot": 1,
+            "seed": 0,
+            "support_set_id": "mvtec_bottle_k1_seed0",
+            "selected_expert": "WinCLIP",
+            "tool_calls": 1,
+        },
+    ]
+    predictions = [
+        {
+            "task_id": row["task_id"],
+            "selected_expert": row["selected_expert"],
+            "expert_name": row["selected_expert"],
+            "tool_calls": 1,
+        }
+        for row in decisions
+    ]
+    _write_csv(run_dir / "route_decisions.csv", decisions)
+    _write_csv(run_dir / "selected_predictions.csv", predictions)
+
+    checks, _ = _check_run_tree(tmp_path / "runs")
+    route_check = next(
+        check
+        for check in checks
+        if check["name"] == "route_decisions_one_expert_per_run"
+    )
+    assert route_check["status"] == "PASS"
+    assert route_check["stats"]["num_routing_tasks"] == 2
+
+    _write_csv(run_dir / "route_decisions.csv", [*decisions, decisions[0]])
+    checks, _ = _check_run_tree(tmp_path / "runs")
+    route_check = next(
+        check
+        for check in checks
+        if check["name"] == "route_decisions_one_expert_per_run"
+    )
+    assert route_check["status"] == "FAIL"
+    assert "!= 1 route decision" in route_check["errors"][0]

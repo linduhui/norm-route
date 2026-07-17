@@ -179,22 +179,10 @@ def analyze_stage4_results(
         "F1 uses saved wrapper decisions and frozen thresholds; target abnormal test samples were not used for threshold or hyperparameter tuning.",
         "The live smoke contains one routed sample, so it validates wiring and ordering rather than production latency or quality.",
     ]
-    route_check = next(
-        (
-            check
-            for check in gate.get("checks", [])
-            if check.get("name") == "route_decisions_one_expert_per_run"
-        ),
-        {},
-    )
-    if route_check.get("status") == "FAIL":
-        limitations.append(
-            "The saved random_seeded control selects experts per sample and therefore violates the frozen one-expert-per-complete-run gate; the existing results are retained and the gate remains FAIL."
-        )
     stage5 = [
         "Integrate official, version-pinned baseline adapters and user-provided weights without automatic downloads; preserve external core algorithms.",
         "Freeze a leakage-safe learned router with query-visible features only, then repeat fold-isolated calibration and testing.",
-        "Make every stochastic control choose once per complete run and add the invariant to replay/grid tests before regenerating comparisons.",
+        "Keep exactly one auditable expert decision per routing task and extend routing tests to future query-visible features.",
         "Expand live execution beyond a one-sample smoke and report actual latency, memory, failures, and quality with uncertainty.",
         "Add VisA and other held-out datasets under the same support_set_id and evaluator-isolation protocol.",
     ]

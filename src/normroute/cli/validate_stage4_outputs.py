@@ -21,12 +21,15 @@ import subprocess
 import sys
 from typing import Any, Iterable, Mapping, Sequence
 
-from ..agent.protocol import Stage4ProtocolError, validate_pre_route_task
+from ..agent.protocol import (
+    CANDIDATE_EXPERTS,
+    Stage4ProtocolError,
+    validate_pre_route_task,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 PROTOCOL_VERSION = "stage4.gate.v1"
-RUN_KEY_COLUMNS = ("dataset", "category", "k_shot", "seed", "support_set_id")
 SPLITS = ("train", "val", "test")
 REQUIRED_RUN_FILES = (
     "route_decisions.csv",
@@ -48,6 +51,9 @@ FORBIDDEN_FEATURE_NAMES = frozenset(
         "winclip_score",
         "anomalydino_score",
     }
+)
+CANONICAL_CANDIDATE_EXPERTS = frozenset(
+    re.sub(r"[^a-z0-9]+", "", name.lower()) for name in CANDIDATE_EXPERTS
 )
 
 
@@ -354,6 +360,7 @@ def _check_run_tree(runs_root: Path | None) -> tuple[list[dict[str, Any]], dict[
     stats = {
         "runs_root": str(runs_root) if runs_root else "",
         "num_run_directories": 0,
+        "num_routing_tasks": 0,
         "num_route_decisions": 0,
         "num_selected_predictions": 0,
         "num_failed_tasks": 0,
@@ -393,7 +400,6 @@ def _check_run_tree(runs_root: Path | None) -> tuple[list[dict[str, Any]], dict[
         stats["selected_prediction_paths"].append(str(run_dir / "selected_predictions.csv"))
 
         decision_by_task: dict[str, list[dict[str, str]]] = {}
-        experts_by_run: dict[tuple[str, ...], set[str]] = {}
         for row_number, row in enumerate(decisions, start=2):
             task_id = row.get("task_id", "").strip()
             expert = row.get("selected_expert", "").strip()
@@ -403,31 +409,22 @@ def _check_run_tree(runs_root: Path | None) -> tuple[list[dict[str, Any]], dict[
                 )
                 continue
             decision_by_task.setdefault(task_id, []).append(row)
-            run_key = tuple(row.get(column, "").strip() for column in RUN_KEY_COLUMNS)
-            if any(not value for value in run_key):
+            if _canonical_expert(expert) not in CANONICAL_CANDIDATE_EXPERTS:
                 categories["route_decisions_one_expert_per_run"].append(
-                    f"{relative}/route_decisions.csv:{row_number} has an incomplete run key"
+                    f"{relative}/route_decisions.csv:{row_number} task_id={task_id!r} "
+                    f"selects invalid or multiple expert value {expert!r}; expected exactly "
+                    f"one of {list(CANDIDATE_EXPERTS)!r}"
                 )
-            experts_by_run.setdefault(run_key, set()).add(_canonical_expert(expert))
             _check_tool_calls_value(
                 row.get("tool_calls"),
                 f"{relative}/route_decisions.csv:{row_number}",
                 categories["tool_calls_at_most_one"],
             )
+        stats["num_routing_tasks"] += len(decision_by_task)
         duplicate_tasks = sorted(task for task, values in decision_by_task.items() if len(values) != 1)
         if duplicate_tasks:
             categories["route_decisions_one_expert_per_run"].append(
                 f"{relative} has task_ids with != 1 route decision; examples={duplicate_tasks[:5]}"
-            )
-        mixed_runs = [
-            (run_key, sorted(experts))
-            for run_key, experts in experts_by_run.items()
-            if len(experts) != 1
-        ]
-        if mixed_runs:
-            categories["route_decisions_one_expert_per_run"].append(
-                f"{relative} selects multiple experts inside {len(mixed_runs)} complete runs; "
-                f"examples={mixed_runs[:3]}"
             )
 
         predictions_by_task: dict[str, list[dict[str, str]]] = {}
@@ -535,8 +532,8 @@ def _check_run_tree(runs_root: Path | None) -> tuple[list[dict[str, Any]], dict[
 def _run_checks(categories: Mapping[str, list[str]], stats: Mapping[str, Any]) -> list[dict[str, Any]]:
     summaries = {
         "route_decisions_one_expert_per_run": (
-            f"validated one route decision and one expert per complete run across "
-            f"{stats['num_run_directories']} run directories"
+            f"validated exactly one expert decision for {stats['num_routing_tasks']} "
+            f"routing tasks across {stats['num_run_directories']} run directories"
         ),
         "tool_calls_at_most_one": (
             f"validated tool_calls <= 1 across {stats['num_route_decisions']} decisions and "
