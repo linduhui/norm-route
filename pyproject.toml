@@ -12,6 +12,14 @@ dependencies = [
     "Pillow>=10",
 ]
 
+[project.optional-dependencies]
+stage5 = [
+    "PyYAML>=6.0",
+    "timm>=1.0",
+    "torch>=2.2",
+    "torchvision>=0.17",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

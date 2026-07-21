@@ -111,6 +111,31 @@ failures, and audit failures are fatal; no row may be silently skipped.
 No script in this skeleton downloads data or weights, creates fake results, or
 changes an external baseline algorithm.
 
+## Frozen visual backbone
+
+Stage 5 router image features use
+`src/normroute/router/feature_provider.py`. The preferred lightweight encoder
+is DINOv2-S/14 (`dinov2_vits14`, 518-pixel input); an explicitly configured
+equivalent lightweight `timm` architecture may be used for an ablation. The
+provider always constructs `timm` models with `pretrained=False`, loads only a
+local checkpoint, switches the model to evaluation mode, and disables gradients
+for every parameter.
+
+The effective backbone config must record `checkpoint_path`, `sha256`,
+`architecture`, `input_size`, and `frozen: true`. Relative checkpoint paths are
+resolved from the config file directory. Copy
+`configs/stage5/router_backbone.example.yaml`, point it at the exact local
+checkpoint, and replace the sentinel hash with that file's SHA-256. Neither the
+feature provider nor the audit script downloads missing weights. A missing file,
+hash mismatch, incompatible state dict, train-mode model, or trainable parameter
+is a hard failure.
+
+Install the optional local environment with `pip install -e ".[stage5]"` only
+after the required packages and checkpoint are available under the project's
+no-automatic-download policy. Before a router run, save the audit emitted by
+`audit_router_backbone.py` alongside the run config and other required
+reproducibility artifacts.
+
 ## Commands
 
 From the repository root:
@@ -118,5 +143,6 @@ From the repository root:
 ```powershell
 python scripts/build_stage5_splits.py --input outputs/stage4/tasks/pre_route_tasks.jsonl
 python scripts/audit_stage5_inputs.py outputs/stage5/splits/fold_manifest.csv
+python scripts/audit_router_backbone.py configs/stage5/router_backbone.yaml
 pytest
 ```
