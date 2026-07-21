@@ -1,0 +1,8 @@
+# Copy this file and replace sha256 with the hash of the exact local checkpoint.
+# The audit fails while the checkpoint is missing or this sentinel hash remains.
+protocol_version: stage5.router_backbone.v1
+checkpoint_path: ../../weights/dinov2/dinov2_vits14.pth
+sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+architecture: dinov2_vits14
+input_size: 518
+frozen: true
