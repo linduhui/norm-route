@@ -1,0 +1,119 @@
+protocol_version: stage5.category_cv.v2
+split_unit: category
+groups:
+  G0:
+    - carpet
+    - bottle
+    - cable
+  G1:
+    - grid
+    - capsule
+    - hazelnut
+  G2:
+    - leather
+    - metal_nut
+    - pill
+  G3:
+    - tile
+    - screw
+    - toothbrush
+  G4:
+    - wood
+    - transistor
+    - zipper
+folds:
+  fold0:
+    train:
+      - leather
+      - metal_nut
+      - pill
+      - tile
+      - screw
+      - toothbrush
+      - wood
+      - transistor
+      - zipper
+    val:
+      - grid
+      - capsule
+      - hazelnut
+    test:
+      - carpet
+      - bottle
+      - cable
+  fold1:
+    train:
+      - carpet
+      - bottle
+      - cable
+      - tile
+      - screw
+      - toothbrush
+      - wood
+      - transistor
+      - zipper
+    val:
+      - leather
+      - metal_nut
+      - pill
+    test:
+      - grid
+      - capsule
+      - hazelnut
+  fold2:
+    train:
+      - carpet
+      - bottle
+      - cable
+      - grid
+      - capsule
+      - hazelnut
+      - wood
+      - transistor
+      - zipper
+    val:
+      - tile
+      - screw
+      - toothbrush
+    test:
+      - leather
+      - metal_nut
+      - pill
+  fold3:
+    train:
+      - carpet
+      - bottle
+      - cable
+      - grid
+      - capsule
+      - hazelnut
+      - leather
+      - metal_nut
+      - pill
+    val:
+      - wood
+      - transistor
+      - zipper
+    test:
+      - tile
+      - screw
+      - toothbrush
+  fold4:
+    train:
+      - grid
+      - capsule
+      - hazelnut
+      - leather
+      - metal_nut
+      - pill
+      - tile
+      - screw
+      - toothbrush
+    val:
+      - carpet
+      - bottle
+      - cable
+    test:
+      - wood
+      - transistor
+      - zipper
