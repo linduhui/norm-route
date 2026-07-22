@@ -6,6 +6,11 @@ the Stage 1 input/evaluator boundary, the Stage 2 shared-support contract, the
 Stage 3 evaluator-only Oracle boundary, and the Stage 4 auditable routing and
 failure-recording rules.
 
+The names, scientific meanings, maturity status, and future implementation
+boundaries of NDSE, NIV/NSVS, BIR-AD, FBDP-AD, ECPB, and RCR are frozen in
+`docs/stage5_innovation_design.md`. Future Stage 5 Goals must follow that
+baseline unless they explicitly version and justify a protocol revision.
+
 ## Objective
 
 Stage 5 measures transfer to categories that are absent from router training

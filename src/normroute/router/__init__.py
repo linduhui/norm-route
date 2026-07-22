@@ -27,13 +27,17 @@ from .feature_cache import (
     file_sha256,
 )
 from .normal_domain import (
+    NIV_COMPONENT_NAMES,
     NormalDomainError,
     NormalDomainInputError,
     NormalDomainSignature,
     NormalDomainSignatureEncoder,
     NormalDomainStatistics,
+    NormalSupportStatistics,
     build_normal_signatures,
     compute_normal_domain_statistics,
+    compute_normal_support_statistics,
+    compute_query_residual_statistics,
     write_normal_signatures_parquet,
 )
 
@@ -60,12 +64,16 @@ __all__ = [
     "FeatureEncodingError",
     "encoder_fingerprint",
     "file_sha256",
+    "NIV_COMPONENT_NAMES",
     "NormalDomainError",
     "NormalDomainInputError",
     "NormalDomainSignature",
     "NormalDomainSignatureEncoder",
     "NormalDomainStatistics",
+    "NormalSupportStatistics",
     "build_normal_signatures",
     "compute_normal_domain_statistics",
+    "compute_normal_support_statistics",
+    "compute_query_residual_statistics",
     "write_normal_signatures_parquet",
 ]

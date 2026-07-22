@@ -1,5 +1,12 @@
 # Stage 5 Feature Cache Smoke Acceptance
 
+> Historical protocol note: this remote smoke was produced by
+> `stage5.normal_domain_signature.v1`. It remains valid evidence for real
+> backbone execution, fp16 content-addressed caching, resume, and hash
+> reproducibility. Its scalar `niv` and Euclidean signature values are legacy
+> and must not be presented as v2 NIV/NSVS scientific results. Protocol v2 must
+> be regenerated in a separate output directory.
+
 ## Scope
 
 This report records the real remote smoke run for the Stage 5 feature cache

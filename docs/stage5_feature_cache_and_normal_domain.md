@@ -3,7 +3,8 @@
 This document freezes the implementation contract for
 `src/normroute/router/feature_cache.py` and
 `src/normroute/router/normal_domain.py`. It is additive to
-`stage5_method_spec.md` and `stage5_leakage_policy.md`.
+`stage5_method_spec.md`, `stage5_leakage_policy.md`, and the terminology/design
+baseline in `stage5_innovation_design.md`.
 
 ## Inference boundary
 
@@ -59,10 +60,12 @@ silently skipped or replaced.
 current encoder namespace. Paths in this manifest are relative to the cache
 root, not necessarily to the manifest directory.
 
-## Normal-domain definitions
+## Normal-domain definitions (v2)
 
-Let normal support global features be `s_i`, query global feature be `q`,
-query patches be `p_j`, and the union of all support patches be `M`.
+Protocol `stage5.normal_domain_signature.v2` explicitly L2-normalizes every
+global and patch vector after loading the fp16 cache. Let normalized support
+global features be `s_i`, normalized query global feature be `q`, normalized
+support patch set for image i be `Z_i`, and normalized query patches be `p_j`.
 
 The normal global prototype is
 
@@ -76,15 +79,39 @@ The diagonal population variance (`ddof=0`) is
 var = (1 / K) * sum_i (s_i - mu)^2
 ```
 
-For K=1, the diagonal variance is exactly zero. Normal intra-support variation
-(NIV) is
+For K=1, the diagonal variance is algebraically zero but
+`normal_diagonal_variance_valid` is false. The former v1 scalar is retained as
 
 ```text
-NIV = sqrt(sum_d var_d)
+global_rms_spread = sqrt(sum_d var_d)
 ```
 
-which is equivalent to the root mean squared Euclidean support distance from
-the prototype. The signed query-global residual is
+and is no longer called the complete NIV.
+
+Normal Intra-support Variation is the structured Normal Support Variation
+Signature:
+
+```text
+V_G = mean_{i<j}(1 - s_i^T s_j)                         # K >= 2
+
+D_L(Z_i,Z_j) = 0.5 * [
+    mean_p min_q(1 - z_i,p^T z_j,q)
+  + mean_q min_p(1 - z_j,q^T z_i,p)
+]
+V_L = mean_{i<j} D_L(Z_i,Z_j)                           # K >= 2
+
+V_S = mean_i [1 - ||mean_p(z_i,p)||_2]
+
+NIV = [V_G*, V_L*, V_S, log2(K), m_G, m_L]
+m_G = m_L = I[K >= 2]
+```
+
+For K=1, the scalar `niv_global` and `niv_local` fields are null and the masks
+are false. Only the model-ready vector uses zero imputation for these two
+positions. This prevents unestimable variation from being confused with
+perfectly identical support samples.
+
+The signed query-global residual is
 
 ```text
 r = q - mu
@@ -92,19 +119,29 @@ r = q - mu
 
 and `query_global_residual_l2` is `||r||_2`.
 
-For every query patch, the nearest-normal distance is
+For every query patch, the nearest-normal cosine distance is
 
 ```text
-d_j = min_{m in M} ||p_j - m||_2
+d_j = min_{m in M} (1 - p_j^T m)
 ```
 
 The frozen patch summaries are q50, q90, q95, and q99 using linear quantile
 interpolation, plus mean and maximum distance. Distance evaluation is chunked
 to bound working memory.
 
-Support global and patch rows are sorted by their feature bytes before
-floating-point reductions. This makes outputs exactly invariant to support
-row permutation rather than merely numerically close.
+Support global rows, patch rows, and support patch sets are sorted by their
+feature bytes before floating-point reductions. This makes outputs exactly
+invariant to support permutation rather than merely numerically close.
+Within one signature build, the query-independent support prototype,
+variance, and all NIV components are memoized by the sorted support image hash
+tuple. Multiple queries sharing the same support set therefore reuse `V_G`,
+`V_L`, and `V_S`; only query residuals and query-to-support patch distances are
+computed per task.
+
+Robust Q05/Q95 normalization of NIV components belongs to the later learned
+Router feature transform. It must be fit using only the current fold's training
+categories and is deliberately not fit by this inference-visible raw signature
+builder.
 
 ## Required artifacts
 
@@ -116,15 +153,18 @@ in one pass and writes:
 - the `feature_cache/entries/` tree when the default cache directory is used.
 
 The Parquet file contains only allowlisted signature data and runner
-provenance. Its numerical fields include the prototype, diagonal variance,
-NIV, query residual, patch-distance quantiles, patch counts, and support image
-hashes. It does not contain image paths, labels, masks, defect types, or
-evaluator outcomes.
+provenance. Its numerical fields include the prototype, diagonal variance and
+validity, `global_rms_spread`, NIV components/vector/masks, query residual,
+patch-distance quantiles, patch counts, and support image hashes. It does not
+contain image paths, labels, masks, defect types, or evaluator outcomes.
 
 Calling the builder again with the same inputs and output/cache directories is
 the resume operation; there is no separate `--resume` flag. Cache entry files
 must remain unchanged, and the manifest and Parquet file must be byte
 reproducible.
+The v2 writer verifies any existing Parquet protocol column and refuses to
+overwrite a v1 or otherwise incompatible signature artifact. A new output
+directory is mandatory when migrating from v1 to v2.
 
 ## Verification
 
@@ -135,6 +175,7 @@ The mandatory tests are in `tests/test_stage5_feature_cache.py` and cover:
 - resume without re-encoding;
 - cached feature and manifest tamper detection;
 - support permutation invariance;
+- L2 scale invariance and K=1 missingness masks;
 - exact normal statistics;
 - required manifest and Parquet output;
 - byte-identical repeated output.

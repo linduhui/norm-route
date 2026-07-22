@@ -7,11 +7,13 @@ import pytest
 
 np = pytest.importorskip("numpy")
 
+import src.normroute.router.normal_domain as normal_domain_module  # noqa: E402
 from src.normroute.router.feature_cache import (  # noqa: E402
     FeatureCache,
     FeatureCacheIntegrityError,
 )
 from src.normroute.router.normal_domain import (  # noqa: E402
+    NormalDomainInputError,
     NormalDomainSignatureEncoder,
     build_normal_signatures,
     compute_normal_domain_statistics,
@@ -155,13 +157,66 @@ def test_duplicate_query_across_k_seed_tasks_is_encoded_once(tmp_path: Path) -> 
     assert signatures[0].query_image_sha256 == signatures[1].query_image_sha256
 
 
+def test_shared_support_statistics_are_computed_once_per_image_hash_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    query0 = _write_image_bytes(tmp_path / "query0.bin", b"query-0")
+    query1 = _write_image_bytes(tmp_path / "query1.bin", b"query-1")
+    support0 = _write_image_bytes(tmp_path / "support0.bin", b"support-0")
+    support1 = _write_image_bytes(tmp_path / "support1.bin", b"support-1")
+    encoder = _CountingEncoder()
+    cache = FeatureCache(tmp_path / "cache", encoder_fingerprint=encoder.fingerprint)
+    signature_encoder = NormalDomainSignatureEncoder(cache, encoder)
+    original = normal_domain_module.compute_normal_support_statistics
+    support_calls = []
+
+    def counted_support_statistics(*args, **kwargs):
+        support_calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        normal_domain_module,
+        "compute_normal_support_statistics",
+        counted_support_statistics,
+    )
+    tasks = [
+        {
+            "task_id": "task-0",
+            "dataset": "mvtec",
+            "category": "bottle",
+            "k_shot": 2,
+            "seed": 0,
+            "support_set_id": "support-shared",
+            "query_path": str(query0),
+        },
+        {
+            "task_id": "task-1",
+            "dataset": "mvtec",
+            "category": "bottle",
+            "k_shot": 2,
+            "seed": 0,
+            "support_set_id": "support-shared",
+            "query_path": str(query1),
+        },
+    ]
+
+    signatures = signature_encoder.encode_tasks(
+        tasks, {"support-shared": [support0, support1]}
+    )
+
+    assert len(signatures) == 2
+    assert len(support_calls) == 1
+    assert len(encoder.encoded_paths) == 4
+    assert signatures[0].statistics.niv == signatures[1].statistics.niv
+
+
 def test_normal_domain_statistics_are_support_permutation_invariant() -> None:
-    query_global = np.asarray([2.0, 3.0], dtype=np.float16)
-    query_patches = np.asarray([[1.0, 0.0], [3.0, 0.0]], dtype=np.float16)
-    support_globals = np.asarray([[0.0, 0.0], [2.0, 2.0]], dtype=np.float16)
+    query_global = np.asarray([1.0, 1.0], dtype=np.float16)
+    query_patches = np.asarray([[1.0, 0.0], [1.0, 1.0]], dtype=np.float16)
+    support_globals = np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float16)
     support_patches = [
-        np.asarray([[0.0, 0.0]], dtype=np.float16),
-        np.asarray([[2.0, 0.0]], dtype=np.float16),
+        np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float16),
+        np.asarray([[1.0, 0.0], [-1.0, 0.0]], dtype=np.float16),
     ]
 
     first = compute_normal_domain_statistics(
@@ -184,13 +239,70 @@ def test_normal_domain_statistics_are_support_permutation_invariant() -> None:
         second.patch_nearest_distance_quantiles,
     )
     assert first.niv == second.niv
+    assert first.niv_global == second.niv_global
+    assert first.niv_local == second.niv_local
+    assert first.niv_structure == second.niv_structure
     assert first.query_global_residual_l2 == second.query_global_residual_l2
-    assert np.array_equal(first.normal_global_prototype, np.asarray([1.0, 1.0]))
-    assert np.array_equal(first.normal_diagonal_variance, np.asarray([1.0, 1.0]))
-    assert first.niv == pytest.approx(np.sqrt(2.0))
-    assert np.array_equal(first.query_global_residual, np.asarray([1.0, 2.0]))
+    assert np.array_equal(first.normal_global_prototype, np.asarray([0.5, 0.5]))
+    assert np.array_equal(first.normal_diagonal_variance, np.asarray([0.25, 0.25]))
+    assert first.normal_diagonal_variance_valid is True
+    assert first.global_rms_spread == pytest.approx(np.sqrt(0.5))
+    assert first.niv_global == pytest.approx(1.0)
+    assert first.niv_local == pytest.approx(0.5)
+    assert first.niv_structure == pytest.approx(
+        0.5 * ((1.0 - np.sqrt(0.5)) + 1.0)
+    )
+    assert first.niv_log2_k == pytest.approx(1.0)
+    assert first.niv_global_valid is True
+    assert first.niv_local_valid is True
+    assert first.niv == pytest.approx(
+        (1.0, 0.5, first.niv_structure, 1.0, 1.0, 1.0)
+    )
+    expected_residual = np.asarray(
+        [1.0 / np.sqrt(2.0) - 0.5, 1.0 / np.sqrt(2.0) - 0.5]
+    )
+    assert np.allclose(first.query_global_residual, expected_residual)
+    assert first.query_global_residual_l2 == pytest.approx(1.0 - 1.0 / np.sqrt(2.0))
+    assert np.all(np.diff(first.patch_nearest_distance_quantiles) >= 0.0)
+    assert first.patch_nearest_distances[0] == pytest.approx(0.0)
+    assert first.patch_nearest_distances[1] == pytest.approx(1.0 - 1.0 / np.sqrt(2.0))
+
+
+def test_normal_domain_statistics_are_scale_invariant_and_mask_one_shot() -> None:
+    query_global = np.asarray([3.0, 4.0], dtype=np.float32)
+    query_patches = np.asarray([[2.0, 0.0], [0.0, 5.0]], dtype=np.float32)
+    support_globals = np.asarray([[10.0, 0.0]], dtype=np.float32)
+    support_patches = [
+        np.asarray([[7.0, 0.0], [0.0, 9.0]], dtype=np.float32)
+    ]
+
+    first = compute_normal_domain_statistics(
+        query_global, query_patches, support_globals, support_patches
+    )
+    second = compute_normal_domain_statistics(
+        query_global * 11.0,
+        query_patches * np.asarray([[3.0], [13.0]], dtype=np.float32),
+        support_globals * 17.0,
+        [support_patches[0] * np.asarray([[19.0], [23.0]], dtype=np.float32)],
+    )
+
+    assert np.array_equal(first.normal_global_prototype, second.normal_global_prototype)
     assert np.array_equal(
-        first.patch_nearest_distance_quantiles, np.ones(4, dtype=np.float32)
+        first.normal_diagonal_variance, second.normal_diagonal_variance
+    )
+    assert np.array_equal(first.query_global_residual, second.query_global_residual)
+    assert np.array_equal(
+        first.patch_nearest_distance_quantiles,
+        second.patch_nearest_distance_quantiles,
+    )
+    assert first.normal_diagonal_variance_valid is False
+    assert first.niv_global is None
+    assert first.niv_local is None
+    assert first.niv_global_valid is False
+    assert first.niv_local_valid is False
+    assert first.niv_log2_k == 0.0
+    assert first.niv == pytest.approx(
+        (0.0, 0.0, 1.0 - np.sqrt(0.5), 0.0, 0.0, 0.0)
     )
 
 
@@ -233,6 +345,20 @@ def test_build_writes_required_manifest_and_parquet_artifacts(tmp_path: Path) ->
     assert row["task_id"] == "task-0"
     assert len(row["normal_global_prototype"]) == 2
     assert len(row["normal_diagonal_variance"]) == 2
+    assert row["normal_diagonal_variance_valid"] is False
+    assert row["niv_component_names"] == [
+        "global_variation",
+        "local_variation",
+        "structural_complexity",
+        "log2_k",
+        "global_valid",
+        "local_valid",
+    ]
+    assert len(row["niv"]) == 6
+    assert row["niv_global"] is None
+    assert row["niv_local"] is None
+    assert row["niv_global_valid"] is False
+    assert row["niv_local_valid"] is False
     assert len(row["query_global_residual"]) == 2
     assert len(row["patch_nearest_distance_quantiles"]) == 4
 
@@ -245,3 +371,50 @@ def test_build_writes_required_manifest_and_parquet_artifacts(tmp_path: Path) ->
     assert len(encoder.encoded_paths) == 2
     assert hashlib.sha256(manifest_path.read_bytes()).hexdigest() == first_manifest_hash
     assert hashlib.sha256(parquet_path.read_bytes()).hexdigest() == first_parquet_hash
+
+
+def test_v2_writer_refuses_to_overwrite_v1_signature_artifact(tmp_path: Path) -> None:
+    pa = pytest.importorskip("pyarrow")
+    parquet = pytest.importorskip("pyarrow.parquet")
+    query = _write_image_bytes(tmp_path / "query.bin", b"query")
+    support = _write_image_bytes(tmp_path / "support.bin", b"support")
+    output_dir = tmp_path / "outputs"
+    output_dir.mkdir()
+    signature_path = output_dir / "normal_signatures.parquet"
+    parquet.write_table(
+        pa.table(
+            {
+                "protocol_version": ["stage5.normal_domain_signature.v1"],
+                "task_id": ["legacy-task"],
+            }
+        ),
+        signature_path,
+    )
+    encoder = _CountingEncoder()
+    tasks = [
+        {
+            "task_id": "task-0",
+            "dataset": "mvtec",
+            "category": "bottle",
+            "k_shot": 1,
+            "seed": 0,
+            "support_set_id": "support-0",
+            "query_path": str(query),
+        }
+    ]
+
+    with pytest.raises(NormalDomainInputError, match="refusing to overwrite"):
+        build_normal_signatures(
+            tasks,
+            {"support-0": [support]},
+            feature_encoder=encoder,
+            output_dir=output_dir,
+        )
+
+    legacy = parquet.read_table(signature_path).to_pylist()
+    assert legacy == [
+        {
+            "protocol_version": "stage5.normal_domain_signature.v1",
+            "task_id": "legacy-task",
+        }
+    ]

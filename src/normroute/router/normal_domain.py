@@ -23,9 +23,17 @@ from .feature_cache import (
 )
 
 
-NORMAL_DOMAIN_PROTOCOL_VERSION = "stage5.normal_domain_signature.v1"
+NORMAL_DOMAIN_PROTOCOL_VERSION = "stage5.normal_domain_signature.v2"
 NORMAL_SIGNATURES_NAME = "normal_signatures.parquet"
 PATCH_DISTANCE_QUANTILES = (0.50, 0.90, 0.95, 0.99)
+NIV_COMPONENT_NAMES = (
+    "global_variation",
+    "local_variation",
+    "structural_complexity",
+    "log2_k",
+    "global_valid",
+    "local_valid",
+)
 
 NORMAL_SIGNATURE_COLUMNS = (
     "protocol_version",
@@ -40,7 +48,16 @@ NORMAL_SIGNATURE_COLUMNS = (
     "support_image_sha256s",
     "normal_global_prototype",
     "normal_diagonal_variance",
+    "normal_diagonal_variance_valid",
+    "global_rms_spread",
+    "niv_component_names",
     "niv",
+    "niv_global",
+    "niv_local",
+    "niv_structure",
+    "niv_log2_k",
+    "niv_global_valid",
+    "niv_local_valid",
     "query_global_residual",
     "query_global_residual_l2",
     "patch_nearest_distance_quantile_levels",
@@ -92,16 +109,66 @@ class NormalDomainDependencyError(NormalDomainError, ImportError):
 
 
 @dataclass(frozen=True)
+class NormalSupportStatistics:
+    """Query-independent statistics for one canonical normal support set.
+
+    ``normalized_support_patches`` is retained so multiple queries sharing the
+    same support set can compute their nearest-patch residuals without
+    rebuilding the support bank or recomputing the expensive pairwise local
+    NIV component.
+    """
+
+    normal_global_prototype: Any
+    normal_diagonal_variance: Any
+    normal_diagonal_variance_valid: bool
+    global_rms_spread: float
+    niv_global: float | None
+    niv_local: float | None
+    niv_structure: float
+    niv_log2_k: float
+    niv_global_valid: bool
+    niv_local_valid: bool
+    normalized_support_patches: Any
+    feature_dimension: int
+    support_count: int
+
+
+@dataclass(frozen=True)
 class NormalDomainStatistics:
     """Numerical normal-domain and query-residual statistics."""
 
     normal_global_prototype: Any
     normal_diagonal_variance: Any
-    niv: float
+    normal_diagonal_variance_valid: bool
+    global_rms_spread: float
+    niv_global: float | None
+    niv_local: float | None
+    niv_structure: float
+    niv_log2_k: float
+    niv_global_valid: bool
+    niv_local_valid: bool
     query_global_residual: Any
     query_global_residual_l2: float
     patch_nearest_distances: Any
     patch_nearest_distance_quantiles: Any
+
+    @property
+    def niv(self) -> tuple[float, float, float, float, float, float]:
+        """Return the model-ready raw NIV vector with explicit validity masks.
+
+        Unestimable cross-support components are imputed as zero only in this
+        vector.  Their scalar fields remain ``None`` and the final two mask
+        components distinguish missing estimates from true zero variation.
+        """
+
+        return (
+            float(self.niv_global) if self.niv_global is not None else 0.0,
+            float(self.niv_local) if self.niv_local is not None else 0.0,
+            float(self.niv_structure),
+            float(self.niv_log2_k),
+            1.0 if self.niv_global_valid else 0.0,
+            1.0 if self.niv_local_valid else 0.0,
+        )
 
 
 @dataclass(frozen=True)
@@ -149,7 +216,18 @@ class NormalDomainSignature:
             "normal_diagonal_variance": _float_list(
                 self.statistics.normal_diagonal_variance, np
             ),
-            "niv": float(self.statistics.niv),
+            "normal_diagonal_variance_valid": (
+                self.statistics.normal_diagonal_variance_valid
+            ),
+            "global_rms_spread": float(self.statistics.global_rms_spread),
+            "niv_component_names": list(NIV_COMPONENT_NAMES),
+            "niv": list(self.statistics.niv),
+            "niv_global": self.statistics.niv_global,
+            "niv_local": self.statistics.niv_local,
+            "niv_structure": float(self.statistics.niv_structure),
+            "niv_log2_k": float(self.statistics.niv_log2_k),
+            "niv_global_valid": self.statistics.niv_global_valid,
+            "niv_local_valid": self.statistics.niv_local_valid,
             "query_global_residual": _float_list(
                 self.statistics.query_global_residual, np
             ),
@@ -177,69 +255,182 @@ def compute_normal_domain_statistics(
     *,
     distance_chunk_size: int = 1024,
 ) -> NormalDomainStatistics:
-    """Compute the frozen Stage 5 normal-domain statistics.
+    """Compute the frozen Stage 5 v2 normal-domain statistics.
 
-    Definitions:
+    All global and patch vectors are explicitly L2-normalized before normal
+    statistics or query residuals are computed.  NIV is a structured normal
+    intra-support variation signature:
 
-    * prototype: arithmetic mean of support global features;
-    * diagonal variance: population variance (``ddof=0``), which is zero for
-      one-shot support;
-    * NIV: root mean squared support distance to the prototype, equivalently
-      ``sqrt(sum(diagonal_variance))``;
-    * query-global residual: signed ``query - prototype`` vector;
-    * patch statistic: for each query patch, Euclidean distance to its nearest
-      support patch, summarized at q50/q90/q95/q99.
+    * ``niv_global``: mean pairwise support-global cosine distance (K>=2);
+    * ``niv_local``: mean pairwise symmetric patch Chamfer cosine distance
+      between support images (K>=2);
+    * ``niv_structure``: mean within-image patch directional dispersion;
+    * ``niv_log2_k`` and validity masks preserve support sufficiency.
 
-    Support rows are lexicographically canonicalized before reductions so the
-    result is exactly invariant to support permutation, not merely close up to
-    floating-point summation order.
+    The previous scalar NIV is retained under the unambiguous name
+    ``global_rms_spread``.  For K=1, cross-support estimates are ``None`` and
+    their validity masks are false; zero appears only as model-ready imputation
+    in the six-component ``niv`` property.
+
+    Support rows and patch sets are lexicographically canonicalized before
+    reductions so the result is exactly invariant to support permutation, not
+    merely close up to floating-point summation order.
     """
 
-    np = _numpy()
-    if (
-        isinstance(distance_chunk_size, bool)
-        or not isinstance(distance_chunk_size, int)
-        or distance_chunk_size <= 0
-    ):
-        raise ValueError("distance_chunk_size must be a positive integer")
+    support_statistics = compute_normal_support_statistics(
+        support_globals,
+        support_patches,
+        distance_chunk_size=distance_chunk_size,
+    )
+    return compute_query_residual_statistics(
+        query_global,
+        query_patches,
+        support_statistics,
+        distance_chunk_size=distance_chunk_size,
+    )
 
-    query_global_array = _vector(query_global, "query_global", np)
-    query_patch_array = _matrix(query_patches, "query_patches", np)
+
+def compute_normal_support_statistics(
+    support_globals: Any,
+    support_patches: Any,
+    *,
+    distance_chunk_size: int = 1024,
+) -> NormalSupportStatistics:
+    """Compute the query-independent part of the Stage 5 v2 signature."""
+
+    np = _numpy()
+    _validate_distance_chunk_size(distance_chunk_size)
     support_global_array = _matrix(support_globals, "support_globals", np)
-    support_patch_array = _support_patch_matrix(support_patches, np)
-    dimension = query_global_array.shape[0]
-    for name, observed in (
-        ("query_patches", query_patch_array.shape[1]),
-        ("support_globals", support_global_array.shape[1]),
-        ("support_patches", support_patch_array.shape[1]),
-    ):
-        if observed != dimension:
+    support_patch_sets = _support_patch_sets(support_patches, np)
+    if len(support_patch_sets) != support_global_array.shape[0]:
+        raise NormalDomainInputError(
+            "support global and patch feature counts disagree: "
+            f"{support_global_array.shape[0]} globals versus "
+            f"{len(support_patch_sets)} patch sets"
+        )
+    dimension = support_global_array.shape[1]
+    for index, patches in enumerate(support_patch_sets):
+        if patches.shape[1] != dimension:
             raise NormalDomainInputError(
-                f"{name} feature dimension {observed} disagrees with query dimension {dimension}"
+                f"support_patches[{index}] feature dimension {patches.shape[1]} "
+                f"disagrees with support dimension {dimension}"
             )
 
-    canonical_globals = _canonical_rows(support_global_array, np).astype(
+    normalized_support_globals = _l2_normalize_rows(
+        support_global_array, "support_globals", np
+    )
+    normalized_support_patch_sets = [
+        _canonical_rows(
+            _l2_normalize_rows(patches, f"support_patches[{index}]", np), np
+        )
+        for index, patches in enumerate(support_patch_sets)
+    ]
+    normalized_support_patch_sets.sort(key=lambda item: item.tobytes())
+
+    canonical_globals = _canonical_rows(normalized_support_globals, np).astype(
         np.float64, copy=False
     )
     prototype64 = canonical_globals.mean(axis=0, dtype=np.float64)
     centered = canonical_globals - prototype64
     variance64 = np.mean(centered * centered, axis=0, dtype=np.float64)
-    niv = math.sqrt(float(variance64.sum(dtype=np.float64)))
-    residual64 = query_global_array.astype(np.float64, copy=False) - prototype64
+    global_rms_spread = math.sqrt(float(variance64.sum(dtype=np.float64)))
+    support_count = canonical_globals.shape[0]
+    cross_support_valid = support_count >= 2
+    niv_global = (
+        _mean_pairwise_cosine_distance(canonical_globals, np)
+        if cross_support_valid
+        else None
+    )
+    niv_local = (
+        _mean_pairwise_patch_chamfer(
+            normalized_support_patch_sets,
+            chunk_size=distance_chunk_size,
+            np=np,
+        )
+        if cross_support_valid
+        else None
+    )
+    structural_values = sorted(
+        _patch_directional_dispersion(patches, np)
+        for patches in normalized_support_patch_sets
+    )
+    niv_structure = math.fsum(structural_values) / len(structural_values)
+    canonical_support_patches = _canonical_rows(
+        np.concatenate(normalized_support_patch_sets, axis=0), np
+    )
 
-    canonical_support_patches = _canonical_rows(support_patch_array, np)
-    distances = _nearest_patch_distances(
-        query_patch_array,
-        canonical_support_patches,
+    return NormalSupportStatistics(
+        normal_global_prototype=prototype64.astype(np.float32),
+        normal_diagonal_variance=variance64.astype(np.float32),
+        normal_diagonal_variance_valid=cross_support_valid,
+        global_rms_spread=global_rms_spread,
+        niv_global=niv_global,
+        niv_local=niv_local,
+        niv_structure=niv_structure,
+        niv_log2_k=math.log2(support_count),
+        niv_global_valid=cross_support_valid,
+        niv_local_valid=cross_support_valid,
+        normalized_support_patches=canonical_support_patches,
+        feature_dimension=dimension,
+        support_count=support_count,
+    )
+
+
+def compute_query_residual_statistics(
+    query_global: Any,
+    query_patches: Any,
+    support_statistics: NormalSupportStatistics,
+    *,
+    distance_chunk_size: int = 1024,
+) -> NormalDomainStatistics:
+    """Add one query's global and patch residuals to cached support statistics."""
+
+    if not isinstance(support_statistics, NormalSupportStatistics):
+        raise TypeError("support_statistics must be NormalSupportStatistics")
+    np = _numpy()
+    _validate_distance_chunk_size(distance_chunk_size)
+    query_global_array = _vector(query_global, "query_global", np)
+    query_patch_array = _matrix(query_patches, "query_patches", np)
+    dimension = support_statistics.feature_dimension
+    for name, observed in (
+        ("query_global", query_global_array.shape[0]),
+        ("query_patches", query_patch_array.shape[1]),
+    ):
+        if observed != dimension:
+            raise NormalDomainInputError(
+                f"{name} feature dimension {observed} disagrees with support dimension {dimension}"
+            )
+    normalized_query_global = _l2_normalize_vector(
+        query_global_array, "query_global", np
+    )
+    normalized_query_patches = _l2_normalize_rows(
+        query_patch_array, "query_patches", np
+    )
+    prototype64 = np.asarray(
+        support_statistics.normal_global_prototype, dtype=np.float64
+    )
+    residual64 = normalized_query_global.astype(np.float64, copy=False) - prototype64
+    distances = _nearest_cosine_distances(
+        normalized_query_patches,
+        support_statistics.normalized_support_patches,
         chunk_size=distance_chunk_size,
         np=np,
     )
     quantiles = _linear_quantiles(distances, PATCH_DISTANCE_QUANTILES, np)
 
     return NormalDomainStatistics(
-        normal_global_prototype=prototype64.astype(np.float32),
-        normal_diagonal_variance=variance64.astype(np.float32),
-        niv=niv,
+        normal_global_prototype=support_statistics.normal_global_prototype,
+        normal_diagonal_variance=support_statistics.normal_diagonal_variance,
+        normal_diagonal_variance_valid=(
+            support_statistics.normal_diagonal_variance_valid
+        ),
+        global_rms_spread=support_statistics.global_rms_spread,
+        niv_global=support_statistics.niv_global,
+        niv_local=support_statistics.niv_local,
+        niv_structure=support_statistics.niv_structure,
+        niv_log2_k=support_statistics.niv_log2_k,
+        niv_global_valid=support_statistics.niv_global_valid,
+        niv_local_valid=support_statistics.niv_local_valid,
         query_global_residual=residual64.astype(np.float32),
         query_global_residual_l2=math.sqrt(float(np.dot(residual64, residual64))),
         patch_nearest_distances=distances.astype(np.float32),
@@ -299,17 +490,28 @@ class NormalDomainSignatureEncoder:
                 raise NormalDomainError(f"path changed during feature caching: {path}")
 
         signatures: list[NormalDomainSignature] = []
+        support_statistics_by_hashes: dict[
+            tuple[str, ...], NormalSupportStatistics
+        ] = {}
         for task in normalized_tasks:
             query_features = feature_by_path[Path(task["query_path"])]
             support_features = [
                 feature_by_path[path] for path in task_support_paths[task["task_id"]]
             ]
             support_features.sort(key=lambda item: item.image_sha256)
-            statistics = compute_normal_domain_statistics(
+            support_hashes = tuple(item.image_sha256 for item in support_features)
+            support_statistics = support_statistics_by_hashes.get(support_hashes)
+            if support_statistics is None:
+                support_statistics = compute_normal_support_statistics(
+                    [item.global_feature for item in support_features],
+                    [item.patch_features for item in support_features],
+                    distance_chunk_size=self.distance_chunk_size,
+                )
+                support_statistics_by_hashes[support_hashes] = support_statistics
+            statistics = compute_query_residual_statistics(
                 query_features.global_feature,
                 query_features.patch_features,
-                [item.global_feature for item in support_features],
-                [item.patch_features for item in support_features],
+                support_statistics,
                 distance_chunk_size=self.distance_chunk_size,
             )
             signatures.append(
@@ -322,9 +524,7 @@ class NormalDomainSignatureEncoder:
                     support_set_id=task["support_set_id"],
                     encoder_fingerprint=self.feature_cache.encoder_fingerprint,
                     query_image_sha256=query_features.image_sha256,
-                    support_image_sha256s=tuple(
-                        item.image_sha256 for item in support_features
-                    ),
+                    support_image_sha256s=support_hashes,
                     statistics=statistics,
                     query_patch_count=int(query_features.patch_features.shape[0]),
                     support_patch_count=sum(
@@ -400,6 +600,10 @@ def write_normal_signatures_parquet(
             raise NormalDomainInputError(
                 "normal signature record does not match the frozen output schema"
             )
+        if record["protocol_version"] != NORMAL_DOMAIN_PROTOCOL_VERSION:
+            raise NormalDomainInputError(
+                "normal signature record protocol does not match the v2 writer"
+            )
     schema = _parquet_schema(pa)
     try:
         table = pa.Table.from_pylist(records, schema=schema)
@@ -408,6 +612,24 @@ def write_normal_signatures_parquet(
 
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file():
+        try:
+            existing_protocols = set(
+                pq.read_table(path, columns=["protocol_version"])
+                .column("protocol_version")
+                .to_pylist()
+            )
+        except Exception as exc:
+            raise NormalDomainError(
+                f"cannot verify existing normal signatures {path}: {exc}"
+            ) from exc
+        if existing_protocols != {NORMAL_DOMAIN_PROTOCOL_VERSION}:
+            raise NormalDomainInputError(
+                f"refusing to overwrite {path} with protocol "
+                f"{NORMAL_DOMAIN_PROTOCOL_VERSION}; existing protocols are "
+                f"{sorted(str(value) for value in existing_protocols)}. "
+                "Use a new output directory for v2 artifacts."
+            )
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -543,18 +765,30 @@ def _reject_forbidden_fields(value: Mapping[str, Any], *, context: str) -> None:
             _reject_forbidden_fields(nested, context=f"{context}.{key}")
 
 
-def _support_patch_matrix(value: Any, np: Any) -> Any:
+def _support_patch_sets(value: Any, np: Any) -> list[Any]:
     if isinstance(value, (list, tuple)):
         if not value:
             raise NormalDomainInputError("support_patches must be non-empty")
-        matrices = [_matrix(item, "support_patches", np) for item in value]
-        return np.concatenate(matrices, axis=0)
+        return [
+            _matrix(item, f"support_patches[{index}]", np)
+            for index, item in enumerate(value)
+        ]
     array = np.asarray(value)
     if array.ndim == 3:
         if array.shape[0] == 0 or array.shape[1] == 0:
             raise NormalDomainInputError("support_patches must be non-empty")
-        return _matrix(array.reshape(-1, array.shape[-1]), "support_patches", np)
-    return _matrix(array, "support_patches", np)
+        return [
+            _matrix(array[index], f"support_patches[{index}]", np)
+            for index in range(array.shape[0])
+        ]
+    # A two-dimensional matrix is unambiguously a single support image.
+    return [_matrix(array, "support_patches[0]", np)]
+
+
+def _support_patch_matrix(value: Any, np: Any) -> Any:
+    """Backward-compatible flattened view of support patch sets."""
+
+    return np.concatenate(_support_patch_sets(value, np), axis=0)
 
 
 def _vector(value: Any, name: str, np: Any) -> Any:
@@ -580,10 +814,112 @@ def _finite_float_array(value: Any, name: str, np: Any) -> Any:
     return array
 
 
+def _validate_distance_chunk_size(value: Any) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError("distance_chunk_size must be a positive integer")
+
+
 def _canonical_rows(value: Any, np: Any) -> Any:
     contiguous = np.ascontiguousarray(value)
     order = sorted(range(contiguous.shape[0]), key=lambda index: contiguous[index].tobytes())
     return contiguous[order]
+
+
+def _l2_normalize_vector(value: Any, name: str, np: Any) -> Any:
+    vector64 = value.astype(np.float64, copy=False)
+    norm = math.sqrt(float(np.dot(vector64, vector64)))
+    if not math.isfinite(norm) or norm <= 1e-12:
+        raise NormalDomainInputError(f"{name} contains a zero-norm feature vector")
+    return vector64 / norm
+
+
+def _l2_normalize_rows(value: Any, name: str, np: Any) -> Any:
+    matrix64 = value.astype(np.float64, copy=False)
+    norms = np.sqrt(np.sum(matrix64 * matrix64, axis=1, dtype=np.float64))
+    invalid = np.flatnonzero((~np.isfinite(norms)) | (norms <= 1e-12))
+    if invalid.size:
+        raise NormalDomainInputError(
+            f"{name} contains zero-norm feature rows at indices "
+            f"{invalid[:5].tolist()}"
+        )
+    return matrix64 / norms[:, None]
+
+
+def _mean_pairwise_cosine_distance(rows: Any, np: Any) -> float:
+    pairwise: list[float] = []
+    for left in range(rows.shape[0]):
+        for right in range(left + 1, rows.shape[0]):
+            pairwise.append(
+                _bounded_cosine_distance(
+                    float(np.dot(rows[left], rows[right]))
+                )
+            )
+    if not pairwise:
+        raise NormalDomainInputError(
+            "pairwise support-global variation requires at least two rows"
+        )
+    return math.fsum(pairwise) / len(pairwise)
+
+
+def _mean_pairwise_patch_chamfer(
+    patch_sets: Sequence[Any], *, chunk_size: int, np: Any
+) -> float:
+    distances: list[float] = []
+    for left in range(len(patch_sets)):
+        for right in range(left + 1, len(patch_sets)):
+            left_to_right = _nearest_cosine_distances(
+                patch_sets[left], patch_sets[right], chunk_size=chunk_size, np=np
+            )
+            right_to_left = _nearest_cosine_distances(
+                patch_sets[right], patch_sets[left], chunk_size=chunk_size, np=np
+            )
+            distances.append(
+                0.5
+                * (
+                    float(left_to_right.mean(dtype=np.float64))
+                    + float(right_to_left.mean(dtype=np.float64))
+                )
+            )
+    if not distances:
+        raise NormalDomainInputError(
+            "pairwise support-local variation requires at least two patch sets"
+        )
+    return math.fsum(distances) / len(distances)
+
+
+def _patch_directional_dispersion(patches: Any, np: Any) -> float:
+    mean_direction = patches.mean(axis=0, dtype=np.float64)
+    concentration = math.sqrt(float(np.dot(mean_direction, mean_direction)))
+    # For unit rows the mean norm lies in [0,1]; clip round-off at the boundary.
+    return min(1.0, max(0.0, 1.0 - concentration))
+
+
+def _bounded_cosine_distance(similarity: float) -> float:
+    return min(2.0, max(0.0, 1.0 - similarity))
+
+
+def _nearest_cosine_distances(
+    queries: Any,
+    supports: Any,
+    *,
+    chunk_size: int,
+    np: Any,
+) -> Any:
+    """Return nearest cosine distances for already L2-normalized rows."""
+
+    query64 = queries.astype(np.float64, copy=False)
+    support64 = supports.astype(np.float64, copy=False)
+    result = np.full(query64.shape[0], np.inf, dtype=np.float64)
+    for query_start in range(0, query64.shape[0], chunk_size):
+        query_chunk = query64[query_start : query_start + chunk_size]
+        best = np.full(query_chunk.shape[0], np.inf, dtype=np.float64)
+        for support_start in range(0, support64.shape[0], chunk_size):
+            support_chunk = support64[support_start : support_start + chunk_size]
+            distance = 1.0 - (query_chunk @ support_chunk.T)
+            np.clip(distance, 0.0, 2.0, out=distance)
+            best = np.minimum(best, distance.min(axis=1))
+        result[query_start : query_start + query_chunk.shape[0]] = best
+    return result
 
 
 def _nearest_patch_distances(
@@ -593,27 +929,13 @@ def _nearest_patch_distances(
     chunk_size: int,
     np: Any,
 ) -> Any:
-    query64 = queries.astype(np.float64, copy=False)
-    support64 = supports.astype(np.float64, copy=False)
-    result = np.full(query64.shape[0], np.inf, dtype=np.float64)
-    for query_start in range(0, query64.shape[0], chunk_size):
-        query_chunk = query64[query_start : query_start + chunk_size]
-        best_squared = np.full(query_chunk.shape[0], np.inf, dtype=np.float64)
-        query_norm = np.sum(query_chunk * query_chunk, axis=1, dtype=np.float64)
-        for support_start in range(0, support64.shape[0], chunk_size):
-            support_chunk = support64[support_start : support_start + chunk_size]
-            support_norm = np.sum(
-                support_chunk * support_chunk, axis=1, dtype=np.float64
-            )
-            squared = (
-                query_norm[:, None]
-                + support_norm[None, :]
-                - 2.0 * (query_chunk @ support_chunk.T)
-            )
-            np.maximum(squared, 0.0, out=squared)
-            best_squared = np.minimum(best_squared, squared.min(axis=1))
-        result[query_start : query_start + query_chunk.shape[0]] = np.sqrt(best_squared)
-    return result
+    """Compatibility alias for the Stage 5 v2 cosine-distance implementation."""
+
+    normalized_queries = _l2_normalize_rows(queries, "query_patches", np)
+    normalized_supports = _l2_normalize_rows(supports, "support_patches", np)
+    return _nearest_cosine_distances(
+        normalized_queries, normalized_supports, chunk_size=chunk_size, np=np
+    )
 
 
 def _linear_quantiles(value: Any, quantiles: Iterable[float], np: Any) -> Any:
@@ -640,7 +962,16 @@ def _parquet_schema(pa: Any) -> Any:
             pa.field("support_image_sha256s", string_list, nullable=False),
             pa.field("normal_global_prototype", float_list, nullable=False),
             pa.field("normal_diagonal_variance", float_list, nullable=False),
-            pa.field("niv", pa.float32(), nullable=False),
+            pa.field("normal_diagonal_variance_valid", pa.bool_(), nullable=False),
+            pa.field("global_rms_spread", pa.float32(), nullable=False),
+            pa.field("niv_component_names", string_list, nullable=False),
+            pa.field("niv", float_list, nullable=False),
+            pa.field("niv_global", pa.float32(), nullable=True),
+            pa.field("niv_local", pa.float32(), nullable=True),
+            pa.field("niv_structure", pa.float32(), nullable=False),
+            pa.field("niv_log2_k", pa.float32(), nullable=False),
+            pa.field("niv_global_valid", pa.bool_(), nullable=False),
+            pa.field("niv_local_valid", pa.bool_(), nullable=False),
             pa.field("query_global_residual", float_list, nullable=False),
             pa.field("query_global_residual_l2", pa.float32(), nullable=False),
             pa.field(
@@ -697,6 +1028,7 @@ __all__ = [
     "NORMAL_DOMAIN_PROTOCOL_VERSION",
     "NORMAL_SIGNATURE_COLUMNS",
     "NORMAL_SIGNATURES_NAME",
+    "NIV_COMPONENT_NAMES",
     "PATCH_DISTANCE_QUANTILES",
     "NormalDomainDependencyError",
     "NormalDomainError",
@@ -704,7 +1036,10 @@ __all__ = [
     "NormalDomainSignature",
     "NormalDomainSignatureEncoder",
     "NormalDomainStatistics",
+    "NormalSupportStatistics",
     "build_normal_signatures",
     "compute_normal_domain_statistics",
+    "compute_normal_support_statistics",
+    "compute_query_residual_statistics",
     "write_normal_signatures_parquet",
 ]
