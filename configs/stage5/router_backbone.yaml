@@ -1,0 +1,6 @@
+protocol_version: stage5.router_backbone.v1
+checkpoint_path: ../../weights/dinov2_vits14_pretrain_timm.pth
+sha256: "82d4346964e211cc5c1ac44c7f2d15d2039f41c2aa86de2c0250ef2a30e12d1e"
+architecture: dinov2_vits14
+input_size: 518
+frozen: true
