@@ -16,6 +16,26 @@ from .feature_provider import (
     verify_local_checkpoint,
     visual_backbone_is_frozen,
 )
+from .feature_cache import (
+    CachedImageFeatures,
+    EncodedFeatureBatch,
+    FeatureCache,
+    FeatureCacheError,
+    FeatureCacheIntegrityError,
+    FeatureEncodingError,
+    encoder_fingerprint,
+    file_sha256,
+)
+from .normal_domain import (
+    NormalDomainError,
+    NormalDomainInputError,
+    NormalDomainSignature,
+    NormalDomainSignatureEncoder,
+    NormalDomainStatistics,
+    build_normal_signatures,
+    compute_normal_domain_statistics,
+    write_normal_signatures_parquet,
+)
 
 __all__ = [
     "CheckpointHashError",
@@ -32,4 +52,20 @@ __all__ = [
     "load_router_backbone_config",
     "verify_local_checkpoint",
     "visual_backbone_is_frozen",
+    "CachedImageFeatures",
+    "EncodedFeatureBatch",
+    "FeatureCache",
+    "FeatureCacheError",
+    "FeatureCacheIntegrityError",
+    "FeatureEncodingError",
+    "encoder_fingerprint",
+    "file_sha256",
+    "NormalDomainError",
+    "NormalDomainInputError",
+    "NormalDomainSignature",
+    "NormalDomainSignatureEncoder",
+    "NormalDomainStatistics",
+    "build_normal_signatures",
+    "compute_normal_domain_statistics",
+    "write_normal_signatures_parquet",
 ]

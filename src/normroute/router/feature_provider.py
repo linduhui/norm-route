@@ -152,6 +152,13 @@ class FeatureProvider(ABC):
     def encode(self, image_paths: Sequence[str | Path]) -> Any:
         """Encode every image or fail explicitly without skipping a sample."""
 
+    def encode_global_and_patches(self, image_paths: Sequence[str | Path]) -> Any:
+        """Return batched global and patch features when the provider supports it."""
+
+        raise RouterBackboneError(
+            "this feature provider does not expose global and patch features"
+        )
+
 
 def load_router_backbone_config(path: str | Path) -> RouterBackboneConfig:
     """Load JSON/YAML config without loading a model or touching the network."""
@@ -348,6 +355,43 @@ class FrozenVisualBackboneProvider(FeatureProvider):
                 raise
             raise RouterBackboneError(f"visual feature encoding failed: {exc}") from exc
 
+    def encode_global_and_patches(self, image_paths: Sequence[str | Path]) -> Any:
+        """Extract the CLS/global vector and every spatial patch token."""
+
+        if isinstance(image_paths, (str, bytes, Path)) or not image_paths:
+            raise RouterBackboneError("image_paths must be a non-empty sequence")
+        if not self.is_frozen:
+            raise RouterBackboneError("visual backbone is no longer frozen")
+
+        images = []
+        try:
+            from PIL import Image
+
+            for raw_path in image_paths:
+                image_path = Path(raw_path)
+                if not image_path.is_file():
+                    raise FileNotFoundError(f"router input image does not exist: {image_path}")
+                with Image.open(image_path) as image:
+                    images.append(self._transform(image.convert("RGB")))
+            batch = self._torch.stack(images).to(self._device)
+            with self._torch.inference_mode():
+                if not hasattr(self._model, "forward_features"):
+                    raise RouterBackboneError(
+                        "visual backbone does not expose patch-level forward_features()"
+                    )
+                output = self._model.forward_features(batch)
+            global_features, patch_features = _canonical_global_patch_embeddings(output)
+            return {
+                "global_features": global_features.detach().cpu(),
+                "patch_features": patch_features.detach().cpu(),
+            }
+        except Exception as exc:
+            if isinstance(exc, RouterBackboneError):
+                raise
+            raise RouterBackboneError(
+                f"visual global/patch feature encoding failed: {exc}"
+            ) from exc
+
     def audit_state(self) -> dict[str, Any]:
         """Return checkpoint and freeze facts for the Stage 5 audit."""
 
@@ -461,6 +505,58 @@ def _canonical_embeddings(value: Any) -> Any:
             f"visual backbone must return one feature vector per image; shape={tuple(value.shape)}"
         )
     return value
+
+
+def _canonical_global_patch_embeddings(value: Any) -> tuple[Any, Any]:
+    """Normalize common timm/DINO forward-feature formats to [B,D]/[B,P,D]."""
+
+    if isinstance(value, Mapping):
+        global_value = None
+        patch_value = None
+        for key in ("x_norm_clstoken", "cls_token", "global_features", "pre_logits"):
+            if key in value:
+                global_value = value[key]
+                break
+        for key in ("x_norm_patchtokens", "patch_tokens", "patch_features", "features"):
+            if key in value:
+                patch_value = value[key]
+                break
+        if global_value is None or patch_value is None:
+            raise RouterBackboneError(
+                "visual backbone forward_features mapping lacks global or patch tokens"
+            )
+    elif isinstance(value, (tuple, list)) and len(value) == 2:
+        global_value, patch_value = value
+    else:
+        if not hasattr(value, "ndim"):
+            raise RouterBackboneError("visual backbone patch output is not a tensor")
+        if value.ndim == 3 and value.shape[1] >= 2:
+            global_value = value[:, 0, :]
+            patch_value = value[:, 1:, :]
+        elif value.ndim == 4:
+            # timm CNN-style [B,C,H,W] output: spatial mean is the global feature.
+            patch_value = value.flatten(start_dim=2).transpose(1, 2)
+            global_value = patch_value.mean(dim=1)
+        else:
+            raise RouterBackboneError(
+                "visual backbone must return token [B,T,D] or map [B,C,H,W] features"
+            )
+
+    if not hasattr(global_value, "ndim") or not hasattr(patch_value, "ndim"):
+        raise RouterBackboneError("visual backbone global/patch outputs are not tensors")
+    if global_value.ndim == 3 and global_value.shape[1] == 1:
+        global_value = global_value[:, 0, :]
+    if patch_value.ndim == 4:
+        patch_value = patch_value.flatten(start_dim=2).transpose(1, 2)
+    if global_value.ndim != 2 or patch_value.ndim != 3:
+        raise RouterBackboneError(
+            "visual backbone global/patch output must have shapes [B,D] and [B,P,D]"
+        )
+    if global_value.shape[0] != patch_value.shape[0]:
+        raise RouterBackboneError("global and patch feature batch sizes disagree")
+    if global_value.shape[-1] != patch_value.shape[-1] or patch_value.shape[1] == 0:
+        raise RouterBackboneError("global and patch feature dimensions disagree")
+    return global_value, patch_value
 
 
 def _load_yaml_mapping(text: str) -> Mapping[str, Any]:
