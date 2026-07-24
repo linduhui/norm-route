@@ -36,9 +36,9 @@ realized expert outcomes, Oracle answers, or teacher utilities at inference.
 | `NDSE` | Normal-Domain Signature Encoder | Builds the support prior and query-relative signature from frozen visual features. | Core v2 statistics implemented; later feature families remain planned. |
 | `NIV` | Normal Intra-support Variation | Structured description of variation observed inside the finite normal support set. | Core v2 vector implemented. |
 | `NSVS` | Normal Support Variation Signature | Preferred long name for the complete NIV vector; avoids claiming that K samples estimate the entire domain. | Same artifact as NIV. |
-| `BIR-AD` | Boundary-Informed Reweighting for Anomaly Detection | Produces boundary clarity/ambiguity evidence for routing; it does not modify external expert algorithms. | Planned; formula must follow Section 5. |
-| `BAI-S` | Support Boundary Ambiguity Index | Support-only boundary ambiguity summary. | Planned. |
-| `BAI-Q` | Query Boundary Ambiguity Index | Query-relative boundary ambiguity summary. | Planned. |
+| `BIR-AD` | Boundary-Informed Reweighting for Anomaly Detection | Produces boundary clarity/ambiguity evidence for routing; it does not modify external expert algorithms. | Core v3, strict alignment, fold normalization, consistency, diagnostics, and Router bundle implemented. |
+| `BAI-S` | Support Boundary Ambiguity Index | Support-only boundary ambiguity summary. | Implemented with variance, reliability, and patch consistency. |
+| `BAI-Q` | Query Boundary Ambiguity Index | Query-relative boundary ambiguity summary. | Implemented with signed shift and support compatibility. |
 | `FBDP-AD` | Foreground-Background Decoupled Normal Prototypes for Anomaly Detection | Describes whether foreground and background normal patterns are separable and whether query patches are explained by either prototype bank. | Planned; formula must follow Section 6. |
 | `FBC` | Foreground-Background Confusion | Support-only overlap/confusion between foreground and background prototype banks. | Planned. |
 | `LGD` | Local-Global Deviation | Query deviation that contrasts global residuals with local patch residuals. | Planned derived query feature. |
@@ -162,6 +162,9 @@ The supported design combines:
 summarizes whether the query's boundary evidence is compatible with that
 normal boundary prior.  Clear and ambiguous pooled tokens may be used as Router
 features, but BIR-AD must not edit PatchCore, WinCLIP, or AnomalyDINO internals.
+
+The implementation and executable ablation contract are documented in
+`docs/stage5_bir_ad.md`.
 
 ## 6. FBDP-AD design boundary
 

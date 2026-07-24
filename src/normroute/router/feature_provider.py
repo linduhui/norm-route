@@ -159,6 +159,18 @@ class FeatureProvider(ABC):
             "this feature provider does not expose global and patch features"
         )
 
+    def align_images_for_patches(
+        self,
+        image_paths: Sequence[str | Path],
+        *,
+        patch_grid_shape: tuple[int, int],
+    ) -> Any:
+        """Return pixel views after the exact patch-token spatial transform."""
+
+        raise RouterBackboneError(
+            "this feature provider does not expose patch-aligned pixel views"
+        )
+
 
 def load_router_backbone_config(path: str | Path) -> RouterBackboneConfig:
     """Load JSON/YAML config without loading a model or touching the network."""
@@ -303,10 +315,40 @@ class FrozenVisualBackboneProvider(FeatureProvider):
             freeze_visual_backbone(model)
             data_config = timm.data.resolve_model_data_config(model)
             data_config["input_size"] = (3, config.input_size, config.input_size)
+            self._data_config = dict(data_config)
+            self._normalization_mean = tuple(
+                float(value) for value in data_config.get("mean", (0.0, 0.0, 0.0))
+            )
+            self._normalization_std = tuple(
+                float(value) for value in data_config.get("std", (1.0, 1.0, 1.0))
+            )
             self._transform = timm.data.create_transform(
                 **data_config,
                 is_training=False,
             )
+            transform_payload = {
+                "provider_config": config.to_dict(),
+                "data_config": {
+                    key: data_config.get(key)
+                    for key in (
+                        "input_size",
+                        "interpolation",
+                        "crop_pct",
+                        "crop_mode",
+                        "mean",
+                        "std",
+                    )
+                },
+                "is_training": False,
+            }
+            self._spatial_transform_fingerprint = hashlib.sha256(
+                json.dumps(
+                    transform_payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest()
         except Exception as exc:
             if isinstance(exc, RouterBackboneError):
                 raise
@@ -392,6 +434,62 @@ class FrozenVisualBackboneProvider(FeatureProvider):
                 f"visual global/patch feature encoding failed: {exc}"
             ) from exc
 
+    @property
+    def spatial_transform_fingerprint(self) -> str:
+        return self._spatial_transform_fingerprint
+
+    def align_images_for_patches(
+        self,
+        image_paths: Sequence[str | Path],
+        *,
+        patch_grid_shape: tuple[int, int],
+    ) -> Any:
+        """Apply the identical resize/crop and return de-normalized RGB views."""
+
+        if isinstance(image_paths, (str, bytes, Path)) or not image_paths:
+            raise RouterBackboneError("image_paths must be a non-empty sequence")
+        rows, columns = _positive_grid_shape(patch_grid_shape)
+        try:
+            from PIL import Image
+
+            from .bir_ad import PatchAlignedImage
+            from .feature_cache import file_sha256
+
+            aligned = []
+            for raw_path in image_paths:
+                image_path = Path(raw_path)
+                if not image_path.is_file():
+                    raise FileNotFoundError(
+                        f"router input image does not exist: {image_path}"
+                    )
+                with Image.open(image_path) as image:
+                    transformed = self._transform(image.convert("RGB"))
+                pixels = canonical_aligned_pixels(
+                    transformed,
+                    mean=self._normalization_mean,
+                    std=self._normalization_std,
+                )
+                if pixels.shape[0] < rows or pixels.shape[1] < columns:
+                    raise RouterBackboneError(
+                        f"aligned pixel shape {pixels.shape[:2]} is smaller than "
+                        f"patch grid {(rows, columns)}"
+                    )
+                aligned.append(
+                    PatchAlignedImage(
+                        pixels=pixels,
+                        patch_grid_shape=(rows, columns),
+                        source_image_sha256=file_sha256(image_path),
+                        transform_fingerprint=self.spatial_transform_fingerprint,
+                    )
+                )
+            return aligned
+        except Exception as exc:
+            if isinstance(exc, RouterBackboneError):
+                raise
+            raise RouterBackboneError(
+                f"visual pixel/patch alignment failed: {exc}"
+            ) from exc
+
     def audit_state(self) -> dict[str, Any]:
         """Return checkpoint and freeze facts for the Stage 5 audit."""
 
@@ -400,7 +498,62 @@ class FrozenVisualBackboneProvider(FeatureProvider):
             "checkpoint": self.checkpoint_record,
             "frozen": self.is_frozen,
             "eval_mode": self.is_eval,
+            "spatial_transform_fingerprint": self.spatial_transform_fingerprint,
         }
+
+
+def canonical_aligned_pixels(
+    transformed: Any,
+    *,
+    mean: Sequence[float],
+    std: Sequence[float],
+) -> Any:
+    """Convert a normalized [C,H,W] transform result into aligned RGB [H,W,C]."""
+
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise Stage5DependencyError(
+            "patch-aligned pixel extraction requires NumPy"
+        ) from exc
+    value = transformed
+    for method in ("detach", "cpu"):
+        if hasattr(value, method):
+            value = getattr(value, method)()
+    if hasattr(value, "numpy"):
+        value = value.numpy()
+    array = np.asarray(value, dtype=np.float64)
+    if array.ndim != 3 or array.shape[0] not in (1, 3):
+        raise RouterBackboneError(
+            f"transformed image must have shape [C,H,W], observed {array.shape}"
+        )
+    mean_values = np.asarray(tuple(mean), dtype=np.float64)
+    std_values = np.asarray(tuple(std), dtype=np.float64)
+    if mean_values.shape != (array.shape[0],) or std_values.shape != (
+        array.shape[0],
+    ):
+        raise RouterBackboneError("transform mean/std channel counts disagree")
+    if not np.isfinite(mean_values).all() or not np.isfinite(std_values).all():
+        raise RouterBackboneError("transform mean/std must be finite")
+    if np.any(std_values <= 0.0) or not np.isfinite(array).all():
+        raise RouterBackboneError("transformed pixels/std must be finite and positive")
+    pixels = array * std_values[:, None, None] + mean_values[:, None, None]
+    return np.ascontiguousarray(
+        np.moveaxis(np.clip(pixels, 0.0, 1.0), 0, -1),
+        dtype=np.float32,
+    )
+
+
+def _positive_grid_shape(value: Any) -> tuple[int, int]:
+    if (
+        not isinstance(value, tuple)
+        or len(value) != 2
+        or any(isinstance(item, bool) or not isinstance(item, int) or item <= 0 for item in value)
+    ):
+        raise RouterBackboneError(
+            "patch_grid_shape must contain two positive integers"
+        )
+    return value
 
 
 def _validate_local_path(value: Any) -> Path:

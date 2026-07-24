@@ -10,6 +10,7 @@ from src.normroute.router.feature_provider import (
     FrozenVisualBackboneProvider,
     RouterBackboneConfig,
     RouterBackboneConfigError,
+    canonical_aligned_pixels,
     checkpoint_sha256,
     freeze_visual_backbone,
     load_router_backbone_config,
@@ -144,6 +145,29 @@ def test_visual_backbone_is_forced_into_frozen_eval_state() -> None:
     assert visual_backbone_is_frozen(model)
     assert model.training is False
     assert all(parameter.requires_grad is False for parameter in model._parameters)
+
+
+def test_aligned_pixels_invert_normalization_without_changing_geometry() -> None:
+    np = pytest.importorskip("numpy")
+    original = np.asarray(
+        [
+            [[0.0, 0.25], [0.5, 1.0]],
+            [[1.0, 0.5], [0.25, 0.0]],
+            [[0.2, 0.4], [0.6, 0.8]],
+        ],
+        dtype=np.float64,
+    )
+    mean = (0.5, 0.4, 0.3)
+    std = (0.2, 0.25, 0.5)
+    transformed = (
+        original - np.asarray(mean)[:, None, None]
+    ) / np.asarray(std)[:, None, None]
+
+    aligned = canonical_aligned_pixels(transformed, mean=mean, std=std)
+
+    assert aligned.shape == (2, 2, 3)
+    assert aligned.dtype == np.float32
+    assert np.allclose(aligned, np.moveaxis(original, 0, -1))
 
 
 def test_config_rejects_unfrozen_router_backbone(tmp_path: Path) -> None:

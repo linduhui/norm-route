@@ -1,0 +1,15 @@
+{
+  "protocol_version": "stage5.bir_ad_ablation.v1",
+  "ablation_order": [
+    "sigma_l2",
+    "plus_sobel",
+    "plus_structural_boundary",
+    "plus_directional_evidence",
+    "plus_cross_modal_disagreement",
+    "plus_support_consistency",
+    "representations_only",
+    "full"
+  ],
+  "selection_rule": "Hyperparameters are selected on validation categories only; target test categories never fit or select an ablation.",
+  "comparison_contract": "All variants use identical tasks, frozen backbone, category fold, and support_set_id."
+}
