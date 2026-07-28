@@ -20,7 +20,7 @@ for support and query inference without fitting anything on the target query.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import math
@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 
-BIR_AD_PROTOCOL_VERSION = "stage5.bir_ad.v3"
+BIR_AD_PROTOCOL_VERSION = "stage5.bir_ad.v4"
 BIR_AD_ALIGNMENT_PROTOCOL_VERSION = "stage5.bir_ad_alignment.v1"
 BIR_AD_NORMALIZATION_PROTOCOL_VERSION = "stage5.bir_ad_normalization.v1"
 BIR_AD_CLARITY_COMPONENT_NAMES = (
@@ -43,6 +43,8 @@ BIR_AD_SIGNAL_NAMES = BIR_AD_CLARITY_COMPONENT_NAMES + ("structural_boundary",)
 BIR_AD_COMPONENT_NAMES = BIR_AD_CLARITY_COMPONENT_NAMES
 DEFAULT_CLARITY_WEIGHTS = (0.2, 0.2, 0.2, 0.2, 0.2)
 DEFAULT_COMPONENT_WEIGHTS = DEFAULT_CLARITY_WEIGHTS
+BIR_AD_CONSISTENCY_BACKENDS = ("numpy", "torch")
+BIR_AD_CONSISTENCY_DTYPES = ("float64", "float32")
 
 
 class BIRADInputError(ValueError):
@@ -271,6 +273,9 @@ class BIRADTaskResult:
     support_pixel_feature_disagreement: float
     query_pixel_feature_disagreement: float
     bai_vector: tuple[float, float, float, float, float]
+    consistency_backend: str = "numpy"
+    consistency_device: str = "cpu"
+    consistency_dtype: str = "float64"
     protocol_version: str = BIR_AD_PROTOCOL_VERSION
 
     @property
@@ -288,6 +293,37 @@ class BIRADTaskResult:
     @property
     def ambiguous_representation(self) -> Any:
         return self.query.ambiguous_representation
+
+
+@dataclass(frozen=True)
+class BIRADSupportContext:
+    """Canonical support-only evidence reusable by all matching queries.
+
+    The context contains no query or evaluator-only information.  Its prepared
+    candidate tensors may live on CUDA, while all serialized BIR-AD outputs
+    remain ordinary NumPy/Python values.
+    """
+
+    supports: tuple[BIRADResult, ...]
+    support_bai: float
+    support_bai_variance: float
+    support_bai_std: float
+    support_bai_reliability: float
+    support_boundary_consistency: float | None
+    support_boundary_consistency_valid: bool
+    support_patch_consistency: tuple[Any, ...]
+    support_pixel_feature_disagreement: float
+    support_bank_features: Any = field(repr=False, compare=False)
+    support_bank_responses: Any = field(repr=False, compare=False)
+    prepared_support_bank: Any = field(
+        default=None, repr=False, compare=False
+    )
+    consistency_temperature: float = 1.0
+    consistency_chunk_size: int = 1024
+    consistency_backend: str = "numpy"
+    consistency_device: str = "cpu"
+    consistency_dtype: str = "float64"
+    protocol_version: str = BIR_AD_PROTOCOL_VERSION
 
 
 @dataclass(frozen=True)
@@ -527,6 +563,9 @@ def compute_bir_ad_task(
 
     consistency_temperature = kwargs.pop("consistency_temperature", 1.0)
     consistency_chunk_size = kwargs.pop("consistency_chunk_size", 1024)
+    consistency_backend = kwargs.pop("consistency_backend", "numpy")
+    consistency_device = kwargs.pop("consistency_device", "cpu")
+    consistency_dtype = kwargs.pop("consistency_dtype", "float64")
     query_result = compute_bir_ad(query_patch_features, query_image, **kwargs)
     support_results = [
         compute_bir_ad(features, pixels, **kwargs)
@@ -537,6 +576,9 @@ def compute_bir_ad_task(
         support_results,
         consistency_temperature=consistency_temperature,
         consistency_chunk_size=consistency_chunk_size,
+        consistency_backend=consistency_backend,
+        consistency_device=consistency_device,
+        consistency_dtype=consistency_dtype,
     )
 
 
@@ -546,6 +588,9 @@ def compose_bir_ad_task(
     *,
     consistency_temperature: float = 1.0,
     consistency_chunk_size: int = 1024,
+    consistency_backend: str = "numpy",
+    consistency_device: str = "cpu",
+    consistency_dtype: str = "float64",
 ) -> BIRADTaskResult:
     """Compose cached image-level results into support/query BIR evidence.
 
@@ -557,6 +602,28 @@ def compose_bir_ad_task(
 
     if not isinstance(query_result, BIRADResult):
         raise TypeError("query_result must be BIRADResult")
+    context = prepare_bir_ad_support_context(
+        support_results,
+        consistency_temperature=consistency_temperature,
+        consistency_chunk_size=consistency_chunk_size,
+        consistency_backend=consistency_backend,
+        consistency_device=consistency_device,
+        consistency_dtype=consistency_dtype,
+    )
+    return compose_bir_ad_query(query_result, context)
+
+
+def prepare_bir_ad_support_context(
+    support_results: Sequence[BIRADResult],
+    *,
+    consistency_temperature: float = 1.0,
+    consistency_chunk_size: int = 1024,
+    consistency_backend: str = "numpy",
+    consistency_device: str = "cpu",
+    consistency_dtype: str = "float64",
+) -> BIRADSupportContext:
+    """Compute query-independent support evidence exactly once per support set."""
+
     supports = _support_sequence(support_results, "support_results")
     if not supports or not all(isinstance(item, BIRADResult) for item in supports):
         raise BIRADInputError("support_results must contain BIRADResult values")
@@ -569,6 +636,11 @@ def compose_bir_ad_task(
         or consistency_chunk_size <= 0
     ):
         raise BIRADInputError("consistency_chunk_size must be a positive integer")
+    backend, device, dtype = _resolve_consistency_runtime(
+        consistency_backend,
+        consistency_device,
+        consistency_dtype,
+    )
     np = _numpy()
     canonical_supports = tuple(sorted(supports, key=_result_sort_key))
     support_bais = sorted(result.bai for result in canonical_supports)
@@ -578,8 +650,6 @@ def compose_bir_ad_task(
     )
     support_variance = math.fsum(squared_deviations) / len(squared_deviations)
     support_std = math.sqrt(support_variance)
-    query_bai = query_result.bai
-    shift = query_bai - support_bai
     support_reliability = math.fsum(
         sorted(result.bai_reliability for result in canonical_supports)
     ) / len(canonical_supports)
@@ -591,22 +661,21 @@ def compose_bir_ad_task(
         canonical_supports,
         temperature=temperature,
         chunk_size=consistency_chunk_size,
+        backend=backend,
+        device=device,
+        dtype=dtype,
         np=np,
     )
     support_bank_features, support_bank_responses = _canonical_patch_bank(
         canonical_supports, np
     )
-    query_patch_consistency = _nearest_response_consistency(
-        query_result.normalized_patch_features,
-        _patch_response_matrix(query_result, np),
+    prepared_support_bank = _prepare_consistency_candidate_bank(
         support_bank_features,
         support_bank_responses,
-        temperature=temperature,
-        chunk_size=consistency_chunk_size,
+        backend=backend,
+        device=device,
+        dtype=dtype,
         np=np,
-    )
-    query_support_consistency = _stable_dot(
-        query_result.boundary_weights, query_patch_consistency
     )
     support_disagreement = math.fsum(
         sorted(
@@ -614,33 +683,94 @@ def compose_bir_ad_task(
             for result in canonical_supports
         )
     ) / len(canonical_supports)
+    return BIRADSupportContext(
+        supports=canonical_supports,
+        support_bai=support_bai,
+        support_bai_variance=support_variance,
+        support_bai_std=support_std,
+        support_bai_reliability=support_reliability,
+        support_boundary_consistency=support_consistency,
+        support_boundary_consistency_valid=support_consistency_valid,
+        support_patch_consistency=support_patch_consistency,
+        support_pixel_feature_disagreement=support_disagreement,
+        support_bank_features=support_bank_features,
+        support_bank_responses=support_bank_responses,
+        prepared_support_bank=prepared_support_bank,
+        consistency_temperature=temperature,
+        consistency_chunk_size=consistency_chunk_size,
+        consistency_backend=backend,
+        consistency_device=device,
+        consistency_dtype=dtype,
+    )
+
+
+def compose_bir_ad_query(
+    query_result: BIRADResult,
+    support_context: BIRADSupportContext,
+) -> BIRADTaskResult:
+    """Compose one query with a frozen, query-independent support context."""
+
+    if not isinstance(query_result, BIRADResult):
+        raise TypeError("query_result must be BIRADResult")
+    if not isinstance(support_context, BIRADSupportContext):
+        raise TypeError("support_context must be BIRADSupportContext")
+    if support_context.protocol_version != BIR_AD_PROTOCOL_VERSION:
+        raise BIRADInputError("support context protocol version is incompatible")
+    np = _numpy()
+    query_patch_consistency = _nearest_response_consistency(
+        query_result.normalized_patch_features,
+        _patch_response_matrix(query_result, np),
+        support_context.support_bank_features,
+        support_context.support_bank_responses,
+        temperature=support_context.consistency_temperature,
+        chunk_size=support_context.consistency_chunk_size,
+        backend=support_context.consistency_backend,
+        device=support_context.consistency_device,
+        dtype=support_context.consistency_dtype,
+        prepared_candidates=support_context.prepared_support_bank,
+        np=np,
+    )
+    query_support_consistency = _stable_dot(
+        query_result.boundary_weights, query_patch_consistency
+    )
+    query_bai = query_result.bai
+    shift = query_bai - support_context.support_bai
     bai_vector = (
-        support_bai,
-        support_std,
+        support_context.support_bai,
+        support_context.support_bai_std,
         query_bai,
         shift,
         abs(shift),
     )
     return BIRADTaskResult(
         query=query_result,
-        supports=canonical_supports,
-        support_bai=support_bai,
-        support_bai_variance=support_variance,
-        support_bai_std=support_std,
+        supports=support_context.supports,
+        support_bai=support_context.support_bai,
+        support_bai_variance=support_context.support_bai_variance,
+        support_bai_std=support_context.support_bai_std,
         query_bai=query_bai,
         query_support_boundary_shift=shift,
-        support_bai_reliability=support_reliability,
+        support_bai_reliability=support_context.support_bai_reliability,
         query_bai_reliability=query_result.bai_reliability,
-        support_boundary_consistency=support_consistency,
-        support_boundary_consistency_valid=support_consistency_valid,
+        support_boundary_consistency=(
+            support_context.support_boundary_consistency
+        ),
+        support_boundary_consistency_valid=(
+            support_context.support_boundary_consistency_valid
+        ),
         query_support_boundary_consistency=query_support_consistency,
-        support_patch_consistency=support_patch_consistency,
+        support_patch_consistency=support_context.support_patch_consistency,
         query_patch_support_consistency=query_patch_consistency,
-        support_pixel_feature_disagreement=support_disagreement,
+        support_pixel_feature_disagreement=(
+            support_context.support_pixel_feature_disagreement
+        ),
         query_pixel_feature_disagreement=(
             query_result.weighted_pixel_feature_disagreement
         ),
         bai_vector=bai_vector,
+        consistency_backend=support_context.consistency_backend,
+        consistency_device=support_context.consistency_device,
+        consistency_dtype=support_context.consistency_dtype,
     )
 
 
@@ -845,6 +975,76 @@ def _numpy() -> Any:
             "BIR-AD requires NumPy from the optional Stage 5 environment"
         ) from exc
     return np
+
+
+def _torch() -> Any:
+    try:
+        import torch
+    except ImportError as exc:
+        raise BIRADDependencyError(
+            "the torch BIR-AD consistency backend requires PyTorch from "
+            "the optional Stage 5 environment"
+        ) from exc
+    return torch
+
+
+def _resolve_consistency_runtime(
+    backend: Any,
+    device: Any,
+    dtype: Any,
+) -> tuple[str, str, str]:
+    if not isinstance(backend, str):
+        raise BIRADInputError(
+            f"consistency_backend must be one of {BIR_AD_CONSISTENCY_BACKENDS}"
+        )
+    normalized_backend = backend.strip().casefold()
+    if normalized_backend not in BIR_AD_CONSISTENCY_BACKENDS:
+        raise BIRADInputError(
+            f"consistency_backend must be one of {BIR_AD_CONSISTENCY_BACKENDS}"
+        )
+    if not isinstance(dtype, str):
+        raise BIRADInputError(
+            f"consistency_dtype must be one of {BIR_AD_CONSISTENCY_DTYPES}"
+        )
+    normalized_dtype = dtype.strip().casefold()
+    if normalized_dtype not in BIR_AD_CONSISTENCY_DTYPES:
+        raise BIRADInputError(
+            f"consistency_dtype must be one of {BIR_AD_CONSISTENCY_DTYPES}"
+        )
+    if normalized_backend == "numpy":
+        if normalized_dtype != "float64":
+            raise BIRADInputError(
+                "the NumPy consistency backend preserves the reference "
+                "implementation only with float64"
+            )
+        normalized_device = str(device).strip().casefold()
+        if normalized_device not in {"cpu", "cpu:0"}:
+            raise BIRADInputError(
+                "the NumPy consistency backend requires consistency_device='cpu'"
+            )
+        return normalized_backend, "cpu", normalized_dtype
+
+    torch = _torch()
+    try:
+        torch_device = torch.device(device)
+    except (TypeError, RuntimeError, ValueError) as exc:
+        raise BIRADInputError("invalid torch consistency_device") from exc
+    if torch_device.type not in {"cpu", "cuda"}:
+        raise BIRADInputError(
+            "the torch consistency backend supports only CPU or CUDA devices"
+        )
+    if torch_device.type == "cuda":
+        if not torch.cuda.is_available():
+            raise BIRADInputError(
+                "CUDA consistency was requested but torch.cuda.is_available() is false"
+            )
+        if torch_device.index is None:
+            torch_device = torch.device("cuda", torch.cuda.current_device())
+        if torch_device.index >= torch.cuda.device_count():
+            raise BIRADInputError(
+                f"CUDA device index {torch_device.index} is unavailable"
+            )
+    return normalized_backend, str(torch_device), normalized_dtype
 
 
 def _positive_finite(value: Any, name: str) -> float:
@@ -1380,11 +1580,28 @@ def _nearest_response_consistency(
     *,
     temperature: float,
     chunk_size: int,
+    backend: str,
+    device: str,
+    dtype: str,
+    prepared_candidates: Any = None,
     np: Any,
 ) -> Any:
     if source_features.shape[1] != candidate_features.shape[1]:
         raise BIRADInputError(
             "support/query feature dimensions disagree for boundary consistency"
+        )
+    if backend == "torch":
+        return _nearest_response_consistency_torch(
+            source_features,
+            source_responses,
+            candidate_features,
+            candidate_responses,
+            temperature=temperature,
+            chunk_size=chunk_size,
+            device=device,
+            dtype=dtype,
+            prepared_candidates=prepared_candidates,
+            np=np,
         )
     consistency = np.empty(source_features.shape[0], dtype=np.float64)
     for start in range(0, source_features.shape[0], chunk_size):
@@ -1403,11 +1620,111 @@ def _nearest_response_consistency(
     return np.clip(consistency, 0.0, 1.0)
 
 
+def _prepare_consistency_candidate_bank(
+    candidate_features: Any,
+    candidate_responses: Any,
+    *,
+    backend: str,
+    device: str,
+    dtype: str,
+    np: Any,
+) -> Any:
+    if backend == "numpy":
+        return None
+    torch = _torch()
+    torch_dtype = torch.float64 if dtype == "float64" else torch.float32
+    return (
+        torch.as_tensor(
+            np.ascontiguousarray(candidate_features),
+            dtype=torch_dtype,
+            device=device,
+        ),
+        torch.as_tensor(
+            np.ascontiguousarray(candidate_responses),
+            dtype=torch_dtype,
+            device=device,
+        ),
+    )
+
+
+def _nearest_response_consistency_torch(
+    source_features: Any,
+    source_responses: Any,
+    candidate_features: Any,
+    candidate_responses: Any,
+    *,
+    temperature: float,
+    chunk_size: int,
+    device: str,
+    dtype: str,
+    prepared_candidates: Any,
+    np: Any,
+) -> Any:
+    torch = _torch()
+    torch_dtype = torch.float64 if dtype == "float64" else torch.float32
+    if prepared_candidates is None:
+        candidate_tensor, candidate_response_tensor = (
+            _prepare_consistency_candidate_bank(
+                candidate_features,
+                candidate_responses,
+                backend="torch",
+                device=device,
+                dtype=dtype,
+                np=np,
+            )
+        )
+    else:
+        candidate_tensor, candidate_response_tensor = prepared_candidates
+    source_tensor = torch.as_tensor(
+        np.ascontiguousarray(source_features),
+        dtype=torch_dtype,
+        device=device,
+    )
+    source_response_tensor = torch.as_tensor(
+        np.ascontiguousarray(source_responses),
+        dtype=torch_dtype,
+        device=device,
+    )
+    consistency_tensor = torch.empty(
+        source_tensor.shape[0],
+        dtype=torch_dtype,
+        device=device,
+    )
+    candidate_transpose = candidate_tensor.transpose(0, 1)
+    with torch.inference_mode():
+        for start in range(0, source_tensor.shape[0], chunk_size):
+            stop = min(start + chunk_size, source_tensor.shape[0])
+            similarities = torch.matmul(
+                source_tensor[start:stop], candidate_transpose
+            )
+            matches = torch.argmax(similarities, dim=1)
+            matched_responses = torch.index_select(
+                candidate_response_tensor, 0, matches
+            )
+            response_delta = torch.mean(
+                torch.abs(
+                    source_response_tensor[start:stop] - matched_responses
+                ),
+                dim=1,
+            )
+            consistency_tensor[start:stop] = torch.exp(
+                -response_delta / temperature
+            )
+    return (
+        torch.clamp(consistency_tensor, 0.0, 1.0)
+        .to(device="cpu", dtype=torch.float64)
+        .numpy()
+    )
+
+
 def _cross_support_patch_consistency(
     supports: Sequence[BIRADResult],
     *,
     temperature: float,
     chunk_size: int,
+    backend: str,
+    device: str,
+    dtype: str,
     np: Any,
 ) -> tuple[tuple[Any, ...], float | None, bool]:
     if len(supports) < 2:
@@ -1436,6 +1753,9 @@ def _cross_support_patch_consistency(
             candidate_responses,
             temperature=temperature,
             chunk_size=chunk_size,
+            backend=backend,
+            device=device,
+            dtype=dtype,
             np=np,
         )
         patch_values.append(consistency)

@@ -22,11 +22,13 @@ from .bir_ad import (
     BIR_AD_PROTOCOL_VERSION,
     BIRADInputError,
     BIRADNormalizationStats,
+    BIRADSupportContext,
     BIRADTaskResult,
     PatchAlignedImage,
-    compose_bir_ad_task,
+    compose_bir_ad_query,
     compute_bir_ad,
     fit_bir_ad_normalization,
+    prepare_bir_ad_support_context,
 )
 from .feature_cache import CachedImageFeatures, FeatureCache
 from .normal_domain import (
@@ -37,7 +39,7 @@ from .normal_domain import (
 )
 
 
-BIR_AD_SIGNATURE_PROTOCOL_VERSION = "stage5.bir_ad_signature.v1"
+BIR_AD_SIGNATURE_PROTOCOL_VERSION = "stage5.bir_ad_signature.v2"
 BIR_AD_FOLD_NORMALIZATION_PROTOCOL_VERSION = (
     "stage5.bir_ad_fold_normalization.v1"
 )
@@ -56,6 +58,9 @@ BIR_AD_SIGNATURE_COLUMNS = (
     "encoder_fingerprint",
     "normalization_sha256",
     "alignment_fingerprint",
+    "consistency_backend",
+    "consistency_device",
+    "consistency_dtype",
     "query_image_sha256",
     "support_image_sha256s",
     "support_bai",
@@ -120,6 +125,9 @@ class BIRADSignature:
             "encoder_fingerprint": self.encoder_fingerprint,
             "normalization_sha256": self.normalization_sha256,
             "alignment_fingerprint": self.alignment_fingerprint,
+            "consistency_backend": result.consistency_backend,
+            "consistency_device": result.consistency_device,
+            "consistency_dtype": result.consistency_dtype,
             "query_image_sha256": self.query_image_sha256,
             "support_image_sha256s": list(self.support_image_sha256s),
             "support_bai": result.support_bai,
@@ -240,6 +248,9 @@ class BIRADTaskEncoder:
         patch_grid_shape: tuple[int, int] | None = None,
         require_fitted_normalization: bool = True,
         bir_ad_kwargs: Mapping[str, Any] | None = None,
+        consistency_backend: str = "numpy",
+        consistency_device: str = "cpu",
+        consistency_dtype: str = "float64",
     ) -> None:
         if (
             isinstance(batch_size, bool)
@@ -288,11 +299,18 @@ class BIRADTaskEncoder:
         self.patch_grid_shape = patch_grid_shape
         self.require_fitted_normalization = require_fitted_normalization
         self.bir_ad_kwargs = dict(bir_ad_kwargs or {})
+        self.consistency_backend = consistency_backend
+        self.consistency_device = consistency_device
+        self.consistency_dtype = consistency_dtype
+        self.last_run_statistics: dict[str, Any] = {}
         forbidden = {
             "normalization_stats",
             "patch_grid_shape",
             "require_fitted_normalization",
             "require_strict_alignment",
+            "consistency_backend",
+            "consistency_device",
+            "consistency_dtype",
         }.intersection(self.bir_ad_kwargs)
         if forbidden:
             raise ValueError(
@@ -336,7 +354,7 @@ class BIRADTaskEncoder:
             )
         )
 
-        signatures = []
+        task_inputs = []
         for task in normalized_tasks:
             query_path = Path(task["query_path"])
             query_features = cached_by_path[query_path]
@@ -351,20 +369,45 @@ class BIRADTaskEncoder:
                     f"task {task['task_id']!r} contains byte-identical support "
                     "images; cross-support consistency requires distinct images"
                 )
+            task_inputs.append(
+                (support_hashes, task, query_features, support_features)
+            )
+        # Group by support content so only one prepared CUDA support bank is
+        # resident at a time and each support-only context is built once.
+        task_inputs.sort(key=lambda item: (item[0], item[1]["task_id"]))
+
+        signatures = []
+        active_support_hashes: tuple[str, ...] | None = None
+        active_support_context: BIRADSupportContext | None = None
+        support_context_build_count = 0
+        support_context_cache_hits = 0
+        for support_hashes, task, query_features, support_features in task_inputs:
             query_result = image_result_by_hash[query_features.image_sha256]
             support_results = [
                 image_result_by_hash[item.image_sha256]
                 for item in support_features
             ]
-            task_result = compose_bir_ad_task(
-                query_result,
-                support_results,
-                consistency_temperature=float(
-                    self.bir_ad_kwargs.get("consistency_temperature", 1.0)
-                ),
-                consistency_chunk_size=int(
-                    self.bir_ad_kwargs.get("consistency_chunk_size", 1024)
-                ),
+            if support_hashes != active_support_hashes:
+                active_support_context = prepare_bir_ad_support_context(
+                    support_results,
+                    consistency_temperature=float(
+                        self.bir_ad_kwargs.get("consistency_temperature", 1.0)
+                    ),
+                    consistency_chunk_size=int(
+                        self.bir_ad_kwargs.get("consistency_chunk_size", 1024)
+                    ),
+                    consistency_backend=self.consistency_backend,
+                    consistency_device=self.consistency_device,
+                    consistency_dtype=self.consistency_dtype,
+                )
+                active_support_hashes = support_hashes
+                support_context_build_count += 1
+            else:
+                support_context_cache_hits += 1
+            if active_support_context is None:
+                raise BIRADPipelineError("support context was not initialized")
+            task_result = compose_bir_ad_query(
+                query_result, active_support_context
             )
             fingerprints = {
                 item.alignment_fingerprint
@@ -400,6 +443,24 @@ class BIRADTaskEncoder:
                 )
             )
         signatures.sort(key=lambda item: item.task_id)
+        self.last_run_statistics = {
+            "task_count": len(signatures),
+            "unique_image_count": len(image_result_by_hash),
+            "unique_support_context_count": support_context_build_count,
+            "support_context_cache_hits": support_context_cache_hits,
+            "consistency_backend": (
+                signatures[0].result.consistency_backend
+                if signatures else self.consistency_backend
+            ),
+            "consistency_device": (
+                signatures[0].result.consistency_device
+                if signatures else self.consistency_device
+            ),
+            "consistency_dtype": (
+                signatures[0].result.consistency_dtype
+                if signatures else self.consistency_dtype
+            ),
+        }
         return signatures
 
     def _align_unique_paths(
@@ -450,7 +511,13 @@ class BIRADTaskEncoder:
         compute_kwargs = {
             key: value
             for key, value in self.bir_ad_kwargs.items()
-            if key not in {"consistency_temperature", "consistency_chunk_size"}
+            if key not in {
+                "consistency_temperature",
+                "consistency_chunk_size",
+                "consistency_backend",
+                "consistency_device",
+                "consistency_dtype",
+            }
         }
         for path in paths:
             cached = cached_by_path[path]

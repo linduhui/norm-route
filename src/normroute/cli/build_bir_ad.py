@@ -38,7 +38,7 @@ from ..router.feature_provider import (
 )
 
 
-BIR_AD_BUILD_PROTOCOL_VERSION = "stage5.bir_ad_build.v1"
+BIR_AD_BUILD_PROTOCOL_VERSION = "stage5.bir_ad_build.v2"
 BIR_AD_BUILD_RUN_NAME = "bir_ad_build_run.json"
 BIR_AD_NORMALIZATION_NAME = "bir_ad_fold_normalization.json"
 BIR_AD_ROUTER_FEATURES_NAME = "router_features.jsonl"
@@ -83,7 +83,33 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=tuple(BIR_AD_ABLATIONS),
         default="full",
     )
-    parser.add_argument("--device", default="cpu")
+    parser.add_argument(
+        "--device",
+        default="cpu",
+        help="Frozen-backbone device; CUDA also selects torch BIR consistency in auto mode.",
+    )
+    parser.add_argument(
+        "--bir-consistency-backend",
+        choices=("auto", "numpy", "torch"),
+        default="auto",
+        help="Nearest-patch consistency backend; auto follows the effective BIR device.",
+    )
+    parser.add_argument(
+        "--bir-device",
+        help="BIR consistency device; defaults to --device for torch and cpu for NumPy.",
+    )
+    parser.add_argument(
+        "--bir-consistency-dtype",
+        choices=("float64", "float32"),
+        default="float64",
+        help="float64 preserves the reference numerical path; float32 is opt-in.",
+    )
+    parser.add_argument(
+        "--consistency-chunk-size",
+        type=int,
+        default=1024,
+        help="Rows per nearest-patch similarity chunk.",
+    )
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument(
         "--grid-shape",
@@ -112,12 +138,20 @@ def main(argv: list[str] | None = None) -> int:
     failures_path = output_dir / BIR_AD_FAILURES_NAME
     outputs: dict[str, Any] = {}
     failures: list[dict[str, str]] = []
+    runtime_statistics: dict[str, Any] = {}
     config_record = {
         key: value
         for key, value in vars(args).items()
     }
     try:
         _validate_args(args)
+        consistency_backend, consistency_device = _resolve_bir_runtime(args)
+        config_record.update(
+            {
+                "resolved_bir_consistency_backend": consistency_backend,
+                "resolved_bir_device": consistency_device,
+            }
+        )
         tasks = read_tasks_jsonl(args.tasks)
         supports = read_supports_csv(args.supports)
         backbone_config = load_router_backbone_config(args.backbone_config)
@@ -160,9 +194,16 @@ def main(argv: list[str] | None = None) -> int:
             pixel_aligner=provider,
             batch_size=args.batch_size,
             patch_grid_shape=_grid_shape(args.grid_shape),
-            bir_ad_kwargs=ablation.compute_kwargs(),
+            bir_ad_kwargs={
+                **ablation.compute_kwargs(),
+                "consistency_chunk_size": args.consistency_chunk_size,
+            },
+            consistency_backend=consistency_backend,
+            consistency_device=consistency_device,
+            consistency_dtype=args.bir_consistency_dtype,
         )
         signatures = encoder.encode_tasks(tasks, supports)
+        runtime_statistics = dict(encoder.last_run_statistics)
         signatures_path = write_bir_ad_signatures_jsonl(
             signatures,
             output_dir / BIR_AD_SIGNATURES_NAME,
@@ -211,6 +252,7 @@ def main(argv: list[str] | None = None) -> int:
         "seed": args.seed,
         "git_commit": _git_commit(),
         "environment": _environment_record(),
+        "runtime_statistics": runtime_statistics,
         "outputs": outputs,
         "failures": failures,
         "predictions": None,
@@ -235,7 +277,32 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--batch-size must be positive")
     if args.diagnostics_limit < 0:
         raise ValueError("--diagnostics-limit must be non-negative")
+    if args.consistency_chunk_size <= 0:
+        raise ValueError("--consistency-chunk-size must be positive")
+    _resolve_bir_runtime(args)
     _grid_shape(args.grid_shape)
+
+
+def _resolve_bir_runtime(args: argparse.Namespace) -> tuple[str, str]:
+    requested_device = str(args.bir_device or args.device).strip()
+    if not requested_device:
+        raise ValueError("BIR consistency device must be non-empty")
+    backend = args.bir_consistency_backend
+    if backend == "auto":
+        backend = (
+            "torch"
+            if requested_device.casefold().split(":", 1)[0] == "cuda"
+            else "numpy"
+        )
+    if backend == "numpy":
+        if args.bir_device and requested_device.casefold() not in {"cpu", "cpu:0"}:
+            raise ValueError("--bir-device must be cpu with the NumPy backend")
+        if args.bir_consistency_dtype != "float64":
+            raise ValueError(
+                "the NumPy consistency backend requires --bir-consistency-dtype float64"
+            )
+        return "numpy", "cpu"
+    return "torch", requested_device
 
 
 def _grid_shape(value: Any) -> tuple[int, int] | None:
@@ -270,12 +337,55 @@ def _environment_record() -> dict[str, Any]:
             packages[package] = importlib.metadata.version(package)
         except importlib.metadata.PackageNotFoundError:
             packages[package] = None
-    return {
+    record = {
         "python": sys.version,
         "executable": sys.executable,
         "platform": platform.platform(),
         "packages": packages,
+        "cuda_environment": {
+            "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES"),
+            "CUBLAS_WORKSPACE_CONFIG": os.environ.get(
+                "CUBLAS_WORKSPACE_CONFIG"
+            ),
+        },
     }
+    try:
+        import torch
+
+        record["torch_cuda"] = {
+            "available": bool(torch.cuda.is_available()),
+            "torch_cuda_version": torch.version.cuda,
+            "cudnn_version": (
+                torch.backends.cudnn.version()
+                if torch.backends.cudnn.is_available() else None
+            ),
+            "device_count": (
+                torch.cuda.device_count() if torch.cuda.is_available() else 0
+            ),
+            "devices": (
+                [
+                    {
+                        "index": index,
+                        "name": torch.cuda.get_device_name(index),
+                        "capability": list(
+                            torch.cuda.get_device_capability(index)
+                        ),
+                    }
+                    for index in range(torch.cuda.device_count())
+                ]
+                if torch.cuda.is_available() else []
+            ),
+        }
+    except Exception as exc:
+        record["torch_cuda"] = {
+            "available": False,
+            "torch_cuda_version": None,
+            "cudnn_version": None,
+            "device_count": 0,
+            "devices": [],
+            "inspection_error": f"{type(exc).__name__}: {exc}",
+        }
+    return record
 
 
 def _git_commit() -> str:

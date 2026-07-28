@@ -16,6 +16,7 @@ from src.normroute.router.bir_ad import (  # noqa: E402
     BIRADInputError,
     BIRADNormalizationStats,
     PatchAlignedImage,
+    compose_bir_ad_task,
     compute_bir_ad,
     compute_bir_ad_task,
     fit_bir_ad_normalization,
@@ -336,6 +337,139 @@ def test_support_permutation_is_exactly_invariant_and_vector_is_formal() -> None
         first.query_support_boundary_shift,
         abs(first.query_support_boundary_shift),
     )
+
+
+def test_torch_consistency_matches_numpy_and_preserves_permutation() -> None:
+    pytest.importorskip("torch")
+    query = compute_bir_ad(
+        _patches(0.25),
+        _edge_image(),
+        normalization_stats=_fitted_stats(),
+    )
+    supports = [
+        compute_bir_ad(
+            _patches(offset),
+            np.rot90(_edge_image(), rotation),
+            normalization_stats=_fitted_stats(),
+        )
+        for offset, rotation in ((0.0, 0), (0.5, 1), (1.0, 2))
+    ]
+    reference = compose_bir_ad_task(query, supports)
+    accelerated = compose_bir_ad_task(
+        query,
+        supports,
+        consistency_backend="torch",
+        consistency_device="cpu",
+        consistency_dtype="float64",
+        consistency_chunk_size=2,
+    )
+    permuted = compose_bir_ad_task(
+        query,
+        [supports[index] for index in (2, 0, 1)],
+        consistency_backend="torch",
+        consistency_device="cpu",
+        consistency_dtype="float64",
+        consistency_chunk_size=2,
+    )
+
+    assert accelerated.consistency_backend == "torch"
+    assert accelerated.consistency_device == "cpu"
+    assert accelerated.consistency_dtype == "float64"
+    assert accelerated.query_support_boundary_consistency == pytest.approx(
+        reference.query_support_boundary_consistency,
+        abs=1e-12,
+    )
+    assert accelerated.support_boundary_consistency == pytest.approx(
+        reference.support_boundary_consistency,
+        abs=1e-12,
+    )
+    assert np.allclose(
+        accelerated.query_patch_support_consistency,
+        reference.query_patch_support_consistency,
+        rtol=1e-12,
+        atol=1e-12,
+    )
+    assert np.array_equal(
+        accelerated.query_patch_support_consistency,
+        permuted.query_patch_support_consistency,
+    )
+    for accelerated_values, permuted_values in zip(
+        accelerated.support_patch_consistency,
+        permuted.support_patch_consistency,
+    ):
+        assert np.array_equal(accelerated_values, permuted_values)
+        assert np.all(np.isfinite(accelerated_values))
+
+
+def test_cuda_consistency_matches_reference_when_available() -> None:
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is not available in the test environment")
+    stats = _fitted_stats()
+    query = compute_bir_ad(
+        _patches(0.25), _edge_image(), normalization_stats=stats
+    )
+    supports = [
+        compute_bir_ad(
+            _patches(offset),
+            np.rot90(_edge_image(), rotation),
+            normalization_stats=stats,
+        )
+        for offset, rotation in ((0.0, 0), (0.5, 1), (1.0, 2))
+    ]
+    reference = compose_bir_ad_task(query, supports)
+    accelerated = compose_bir_ad_task(
+        query,
+        supports,
+        consistency_backend="torch",
+        consistency_device="cuda:0",
+        consistency_dtype="float64",
+        consistency_chunk_size=2,
+    )
+    permuted = compose_bir_ad_task(
+        query,
+        [supports[index] for index in (1, 2, 0)],
+        consistency_backend="torch",
+        consistency_device="cuda:0",
+        consistency_dtype="float64",
+        consistency_chunk_size=2,
+    )
+
+    assert np.allclose(
+        accelerated.query_patch_support_consistency,
+        reference.query_patch_support_consistency,
+        rtol=1e-11,
+        atol=1e-12,
+    )
+    assert np.array_equal(
+        accelerated.query_patch_support_consistency,
+        permuted.query_patch_support_consistency,
+    )
+    assert accelerated.query_support_boundary_consistency == pytest.approx(
+        reference.query_support_boundary_consistency,
+        rel=1e-11,
+        abs=1e-12,
+    )
+
+
+def test_consistency_runtime_rejects_unsafe_backend_combinations() -> None:
+    query = compute_bir_ad(_patches(), _edge_image())
+    support = compute_bir_ad(_patches(0.5), _edge_image())
+
+    with pytest.raises(BIRADInputError, match="NumPy.*float64"):
+        compose_bir_ad_task(
+            query,
+            [support],
+            consistency_backend="numpy",
+            consistency_dtype="float32",
+        )
+    with pytest.raises(BIRADInputError, match="NumPy.*cpu"):
+        compose_bir_ad_task(
+            query,
+            [support],
+            consistency_backend="numpy",
+            consistency_device="cuda:0",
+        )
 
 
 def test_patch_level_cross_support_consistency_has_explicit_k1_missingness() -> None:

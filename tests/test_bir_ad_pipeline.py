@@ -248,6 +248,56 @@ def test_batch_encoder_reuses_cache_and_writes_router_ready_signatures(
     assert all(len(record["bai_vector"]) == 5 for record in records)
     assert all(len(record["clear_representation"]) == 3 for record in records)
     assert all(record["normalization_sha256"] for record in records)
+    assert all(record["consistency_backend"] == "numpy" for record in records)
+    assert all(record["consistency_device"] == "cpu" for record in records)
+    assert all(record["consistency_dtype"] == "float64" for record in records)
+
+
+def test_batch_encoder_builds_one_context_per_unique_support_set(
+    tmp_path: Path,
+) -> None:
+    tasks, supports, folds, _ = _inputs(tmp_path)
+    encoder = _FakeEncoder()
+    aligner = _FakeAligner()
+    cache = FeatureCache(
+        tmp_path / "cache",
+        encoder_fingerprint=encoder.fingerprint,
+    )
+    artifact = fit_fold_bir_ad_normalization(
+        tasks,
+        supports,
+        folds,
+        fold="fold0",
+        feature_cache=cache,
+        feature_encoder=encoder,
+        pixel_aligner=aligner,
+    )
+    repeated_support_task = {
+        **tasks[0],
+        "task_id": "task-train-second-query",
+        "query_path": tasks[1]["query_path"],
+    }
+    task_encoder = BIRADTaskEncoder(
+        cache,
+        encoder,
+        normalization_artifact=artifact,
+        pixel_aligner=aligner,
+    )
+
+    signatures = task_encoder.encode_tasks(
+        [*tasks, repeated_support_task], supports
+    )
+
+    assert len(signatures) == 3
+    assert task_encoder.last_run_statistics == {
+        "task_count": 3,
+        "unique_image_count": 5,
+        "unique_support_context_count": 2,
+        "support_context_cache_hits": 1,
+        "consistency_backend": "numpy",
+        "consistency_device": "cpu",
+        "consistency_dtype": "float64",
+    }
 
 
 def test_batch_encoder_rejects_non_train_good_support(tmp_path: Path) -> None:

@@ -5,6 +5,7 @@ import pytest
 
 from src.normroute.cli.build_bir_ad import (
     BIR_AD_BUILD_RUN_NAME,
+    _resolve_bir_runtime,
     _validate_args,
     main,
     parse_args,
@@ -35,6 +36,32 @@ def test_batch_bir_ad_cli_parses_fold_and_ablation() -> None:
     _validate_args(args)
     assert args.fold == "fold0"
     assert args.grid_shape == [37, 37]
+    assert _resolve_bir_runtime(args) == ("numpy", "cpu")
+
+
+def test_batch_bir_ad_cli_auto_selects_cuda_consistency() -> None:
+    args = parse_args(
+        [
+            "--tasks",
+            "tasks.jsonl",
+            "--supports",
+            "supports.csv",
+            "--normalization-artifact",
+            "normalization.json",
+            "--backbone-config",
+            "backbone.yaml",
+            "--device",
+            "cuda:3",
+            "--consistency-chunk-size",
+            "4096",
+        ]
+    )
+
+    _validate_args(args)
+
+    assert _resolve_bir_runtime(args) == ("torch", "cuda:3")
+    assert args.bir_consistency_dtype == "float64"
+    assert args.consistency_chunk_size == 4096
 
 
 def test_batch_bir_ad_cli_requires_fold_for_fitting() -> None:

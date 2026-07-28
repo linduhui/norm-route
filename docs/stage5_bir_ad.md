@@ -102,6 +102,12 @@ contrast. Query-to-support consistency uses the same frozen normal patch bank.
 K=1 support consistency is represented as missing plus an explicit validity
 mask, never as measured zero consistency. Byte-identical supports are rejected.
 
+The reference consistency backend is NumPy/CPU/float64. The equivalent
+PyTorch backend moves the feature-nearest response matrix calculation to CPU
+or CUDA without changing the matching, response-distance, temperature, or
+aggregation formulas. Float64 is the reproducible comparison setting. Backend,
+logical device, and dtype are recorded in every signature and run record.
+
 ## Fold normalization closure
 
 `fit_fold_bir_ad_normalization()`:
@@ -115,7 +121,10 @@ mask, never as measured zero consistency. Byte-identical supports are rejected.
    fingerprint, and alignment fingerprint.
 
 `BIRADTaskEncoder` can receive this complete artifact. It refuses to encode if
-the current feature cache or spatial transform disagrees with it.
+the current feature cache or spatial transform disagrees with it. Tasks are
+grouped by canonical support hashes: support-only BAI, patch consistency, and
+the prepared support patch bank are built once for all queries sharing that
+support set. Only one prepared CUDA support context is retained at a time.
 
 ## Router feature contract
 
@@ -152,6 +161,14 @@ whether the pooled tokens alone explain the gain. Comparing `full` against
 representations. All variants must share tasks, fold, backbone, and
 `support_set_id`; selection is validation-category-only.
 
+`plus_cross_modal_disagreement`, `plus_support_consistency`,
+`representations_only`, and `full` have identical BIR compute settings and
+differ only in which already-computed values enter the Router vector. Run
+`full` once, then use `scripts/materialize_bir_ad_ablation.py` for the other
+three. The command rejects any source whose compute settings, signature
+protocol, consistency runtime, normalization, failures, or provenance are
+incompatible.
+
 ## Batch command
 
 Fit one fold, encode tasks, save diagnostic maps for a subset, and optionally
@@ -175,3 +192,46 @@ No data or weights are downloaded. The command saves the frozen normalization,
 ablation record, BIR-AD signatures, optional Router feature bundle, cache
 manifest, explicit failures, diagnostics, and a run record containing config,
 seed, git commit, and environment.
+
+## Five-fold CUDA ablations
+
+The CUDA path can be selected explicitly:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 CUBLAS_WORKSPACE_CONFIG=:4096:8 \
+python scripts/build_bir_ad.py \
+  --tasks outputs/stage5/tasks/bir_ad_tasks.jsonl \
+  --supports outputs/stage5/supports/bir_ad_supports.csv \
+  --normalization-artifact outputs/stage5/bir_ad/fold0/bir_ad_fold_normalization.json \
+  --backbone-config configs/stage5/router_backbone.yaml \
+  --feature-cache outputs/stage5/features \
+  --normal-signatures outputs/stage5/normal_domain/normal_signatures.parquet \
+  --device cuda:0 \
+  --bir-consistency-backend torch \
+  --bir-device cuda:0 \
+  --bir-consistency-dtype float64 \
+  --consistency-chunk-size 4096 \
+  --batch-size 64 \
+  --grid-shape 37 37 \
+  --ablation full \
+  --output-dir outputs/stage5/bir_ad_ablations_gpu_v2/fold0/full
+```
+
+When `--bir-consistency-backend auto` is left at its default, a CUDA
+`--device` automatically selects the torch CUDA consistency path. The
+explicit flags above are preferred for final experiment records.
+
+For six concurrent GPU workers distributing the five-fold compute jobs, run:
+
+```bash
+chmod +x scripts/run_bir_ad_gpu_ablations.sh
+GPUS=0,1,2,3,4,5 \
+PROJECT_ROOT=/data/gauss/ldh/projects/norm-route \
+bash scripts/run_bir_ad_gpu_ablations.sh
+```
+
+The runner keeps at most one job on each listed GPU, executes five distinct BIR
+compute configurations per fold, then materializes the remaining three
+Router-only variants from `full`. It requires the feature-cache manifest and
+all five frozen normalization artifacts to exist before launch; it never tunes
+normalization per ablation.
