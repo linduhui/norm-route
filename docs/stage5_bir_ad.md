@@ -161,13 +161,45 @@ whether the pooled tokens alone explain the gain. Comparing `full` against
 representations. All variants must share tasks, fold, backbone, and
 `support_set_id`; selection is validation-category-only.
 
-`plus_cross_modal_disagreement`, `plus_support_consistency`,
-`representations_only`, and `full` have identical BIR compute settings and
-differ only in which already-computed values enter the Router vector. Run
-`full` once, then use `scripts/materialize_bir_ad_ablation.py` for the other
-three. The command rejects any source whose compute settings, signature
-protocol, consistency runtime, normalization, failures, or provenance are
-incompatible.
+The v2 ablation protocol also freezes feature-level causal isolation:
+
+- `sigma_l2`, `plus_sobel`, and `plus_structural_boundary` expose only the
+  five BAI core scalars;
+- `plus_directional_evidence` additionally exposes the two reliability
+  scalars;
+- `plus_cross_modal_disagreement` additionally exposes the two explicit
+  pixel-feature disagreement scalars;
+- `plus_support_consistency` additionally exposes the two consistency
+  scalars and validity mask;
+- `representations_only` exposes the dual pooled representations but no BAI,
+  reliability, disagreement, or consistency scalar;
+- `full` exposes all groups.
+
+Thus an earlier row cannot accidentally receive a statistic introduced by a
+later row. The first six variants are cumulative compute interventions;
+`representations_only` is a non-cumulative mechanism control; and
+`full - plus_support_consistency` isolates the dual representations.
+
+Some variants have identical BIR compute settings and differ only in which
+already-computed values enter the Router vector. The materializer rejects any
+source whose compute settings, signature protocol, consistency runtime,
+normalization, failures, or provenance are incompatible. Router feature files
+created under `stage5.bir_ad_ablation.v1` /
+`stage5.router_feature_bundle.v1` must not be used to claim strict
+feature-level causality. The downstream Router accepts only strict
+`stage5.router_feature_bundle.v2` inputs. Old artifacts can be converted from
+their immutable BIR signatures with:
+
+```bash
+chmod +x scripts/rematerialize_bir_ad_strict_ablations.sh
+SOURCE_ROOT=outputs/stage5/bir_ad_ablations_gpu_v2 \
+OUTPUT_ROOT=outputs/stage5/bir_ad_ablations_strict_v1 \
+MAX_PARALLEL=2 \
+bash scripts/rematerialize_bir_ad_strict_ablations.sh
+```
+
+The source experiment directories are read-only inputs; the command writes a
+new strict artifact tree and never edits an expert implementation.
 
 ## Batch command
 
@@ -235,3 +267,51 @@ compute configurations per fold, then materializes the remaining three
 Router-only variants from `full`. It requires the feature-cache manifest and
 all five frozen normalization artifacts to exist before launch; it never tunes
 normalization per ablation.
+
+## Learned Router downstream validation
+
+`scripts/run_stage5_router.py` evaluates whether the isolated BIR-AD evidence
+is useful to routing rather than merely descriptive. For each category-held-out
+fold it:
+
+1. validates exact feature/task/support provenance and disjoint train/val/test
+   categories;
+2. loads expert outcomes for train and validation categories as a separate
+   supervision channel;
+3. fits feature location/scale on train only and trains the same class-balanced
+   linear softmax Router for every feature view;
+4. selects L2 using validation accuracy and cross-entropy only;
+5. writes a label-free test prediction file before opening the test evaluator
+   channel;
+6. reports the learned Router, train-selected global-best expert, and a
+   sample-Oracle evaluator reference.
+
+The test prediction contains only the selected expert and Router
+probabilities. Labels, expert scores, Oracle identities, utility, and regret
+exist only below `evaluator_only/`. Test outcomes cannot update the model,
+standardization, L2, or predictions.
+
+Run all five folds and all strict feature views on six GPUs:
+
+```bash
+chmod +x scripts/run_stage5_router_cv.sh
+GPUS=0,1,2,3,4,5 \
+FEATURE_ROOT=outputs/stage5/bir_ad_ablations_strict_v1 \
+OUTPUT_ROOT=outputs/stage5/router_cv_strict_v1 \
+BATCH_SIZE=2048 \
+bash scripts/run_stage5_router_cv.sh
+```
+
+The runner produces 45 failure-explicit runs and then writes:
+
+- `summary/per_fold_metrics.csv`;
+- `summary/summary_metrics.csv`;
+- `summary/paired_ablation_deltas.csv`;
+- `summary/router_cv_tables.md`;
+- `summary/run.json` and `summary/failures.json`.
+
+Paired deltas compare candidate and reference on the same five folds.
+`paired_ablation_deltas.csv` includes effect mean/std, positive/negative fold
+counts, and an exact two-sided sign-flip permutation p-value. With only five
+folds its p-value resolution is coarse, so papers must report effect magnitude
+and fold consistency rather than treating p-value alone as evidence.

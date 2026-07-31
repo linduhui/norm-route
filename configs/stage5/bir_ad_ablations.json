@@ -1,5 +1,5 @@
 {
-  "protocol_version": "stage5.bir_ad_ablation.v1",
+  "protocol_version": "stage5.bir_ad_ablation.v2",
   "ablation_order": [
     "sigma_l2",
     "plus_sobel",
@@ -11,5 +11,5 @@
     "full"
   ],
   "selection_rule": "Hyperparameters are selected on validation categories only; target test categories never fit or select an ablation.",
-  "comparison_contract": "All variants use identical tasks, frozen backbone, category fold, and support_set_id."
+  "comparison_contract": "All variants use identical tasks, frozen backbone, category fold, support_set_id, and Router optimization. Each cumulative variant exposes only the evidence groups introduced up to that step."
 }

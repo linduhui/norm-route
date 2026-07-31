@@ -18,7 +18,7 @@ from typing import Any, Mapping, Sequence
 from .bir_ad_ablation import BIRADAblationSpec, get_bir_ad_ablation
 
 
-ROUTER_FEATURE_BUNDLE_PROTOCOL_VERSION = "stage5.router_feature_bundle.v1"
+ROUTER_FEATURE_BUNDLE_PROTOCOL_VERSION = "stage5.router_feature_bundle.v2"
 
 _PROVENANCE_FIELDS = (
     "task_id",
@@ -30,14 +30,18 @@ _PROVENANCE_FIELDS = (
     "encoder_fingerprint",
     "query_image_sha256",
 )
-_BIR_SCALAR_FIELDS = (
+_BIR_CORE_FIELDS = (
     ("bir_support_bai", "support_bai"),
     ("bir_support_bai_std", "support_bai_std"),
     ("bir_query_bai", "query_bai"),
     ("bir_query_support_boundary_shift", "query_support_boundary_shift"),
     ("bir_absolute_boundary_shift", "absolute_boundary_shift"),
+)
+_BIR_RELIABILITY_FIELDS = (
     ("bir_support_bai_reliability", "support_bai_reliability"),
     ("bir_query_bai_reliability", "query_bai_reliability"),
+)
+_BIR_DISAGREEMENT_FIELDS = (
     (
         "bir_support_pixel_feature_disagreement",
         "support_pixel_feature_disagreement",
@@ -147,8 +151,14 @@ def build_router_feature_bundle(
     ):
         _append_scalar(names, values, f"normal_{name}", normal.get(name))
 
-    if spec.include_bai_features:
-        for feature_name, record_name in _BIR_SCALAR_FIELDS:
+    if spec.include_bai_core:
+        for feature_name, record_name in _BIR_CORE_FIELDS:
+            _append_scalar(names, values, feature_name, bir.get(record_name))
+    if spec.include_reliability:
+        for feature_name, record_name in _BIR_RELIABILITY_FIELDS:
+            _append_scalar(names, values, feature_name, bir.get(record_name))
+    if spec.include_disagreement:
+        for feature_name, record_name in _BIR_DISAGREEMENT_FIELDS:
             _append_scalar(names, values, feature_name, bir.get(record_name))
     if spec.include_consistency_features:
         consistency_valid = bool(

@@ -104,6 +104,13 @@ from .normal_domain import (
     compute_query_residual_statistics,
     write_normal_signatures_parquet,
 )
+from .learned_router import (
+    STAGE5_LINEAR_ROUTER_PROTOCOL_VERSION,
+    LinearRouterFit,
+    LinearRouterModel,
+    Stage5RouterError,
+    fit_linear_router,
+)
 
 __all__ = [
     "BIR_AD_ALIGNMENT_PROTOCOL_VERSION",
@@ -196,4 +203,9 @@ __all__ = [
     "compute_normal_support_statistics",
     "compute_query_residual_statistics",
     "write_normal_signatures_parquet",
+    "STAGE5_LINEAR_ROUTER_PROTOCOL_VERSION",
+    "LinearRouterFit",
+    "LinearRouterModel",
+    "Stage5RouterError",
+    "fit_linear_router",
 ]

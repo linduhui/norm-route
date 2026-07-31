@@ -6,6 +6,7 @@ import pytest
 
 from src.normroute.router.bir_ad_ablation import (
     BIR_AD_ABLATIONS,
+    BIR_AD_ABLATION_PROTOCOL_VERSION,
     bir_ad_ablation_records,
 )
 from src.normroute.router.feature_bundle import (
@@ -106,18 +107,52 @@ def test_router_bundle_rejects_cross_task_or_cross_support_join() -> None:
 
 
 def test_router_ablation_registry_is_executable_and_nested() -> None:
-    lengths = {}
+    lengths: dict[str, int] = {}
+    names: dict[str, set[str]] = {}
     for name, spec in BIR_AD_ABLATIONS.items():
         assert spec.compute_kwargs()["clarity_weights"] == spec.clarity_weights
         bundle = build_router_feature_bundle(
             _normal_record(), _bir_record(), ablation=name
         )
         lengths[name] = len(bundle.values)
+        names[name] = set(bundle.feature_names)
         assert bundle.ablation_name == name
 
+    normal_dimension = 16
+    assert lengths == {
+        "sigma_l2": normal_dimension + 5,
+        "plus_sobel": normal_dimension + 5,
+        "plus_structural_boundary": normal_dimension + 5,
+        "plus_directional_evidence": normal_dimension + 7,
+        "plus_cross_modal_disagreement": normal_dimension + 9,
+        "plus_support_consistency": normal_dimension + 12,
+        "representations_only": normal_dimension + 6,
+        "full": normal_dimension + 18,
+    }
     assert lengths["full"] > lengths["plus_support_consistency"]
     assert lengths["plus_support_consistency"] > lengths["sigma_l2"]
     assert lengths["representations_only"] < lengths["full"]
+    for name in ("sigma_l2", "plus_sobel", "plus_structural_boundary"):
+        assert "bir_query_bai" in names[name]
+        assert "bir_query_bai_reliability" not in names[name]
+        assert "bir_query_pixel_feature_disagreement" not in names[name]
+    assert "bir_query_bai_reliability" in names["plus_directional_evidence"]
+    assert (
+        "bir_query_pixel_feature_disagreement"
+        not in names["plus_directional_evidence"]
+    )
+    assert (
+        "bir_query_pixel_feature_disagreement"
+        in names["plus_cross_modal_disagreement"]
+    )
+    assert (
+        "bir_query_support_boundary_consistency"
+        not in names["plus_cross_modal_disagreement"]
+    )
+    assert (
+        "bir_query_support_boundary_consistency"
+        in names["plus_support_consistency"]
+    )
     assert [record["name"] for record in bir_ad_ablation_records()] == list(
         BIR_AD_ABLATIONS
     )
@@ -127,6 +162,7 @@ def test_ablation_config_matches_frozen_registry() -> None:
     config = json.loads(
         Path("configs/stage5/bir_ad_ablations.json").read_text(encoding="utf-8")
     )
+    assert config["protocol_version"] == BIR_AD_ABLATION_PROTOCOL_VERSION
     assert config["ablation_order"] == list(BIR_AD_ABLATIONS)
     assert "support_set_id" in config["comparison_contract"]
 

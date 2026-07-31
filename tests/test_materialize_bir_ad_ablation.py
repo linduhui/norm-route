@@ -56,6 +56,20 @@ def test_router_only_materialization_requires_compute_equivalence() -> None:
         )
 
 
+def test_materializer_accepts_v1_compute_for_strict_v2_feature_views() -> None:
+    source = get_bir_ad_ablation("full").to_dict()
+    source["protocol_version"] = "stage5.bir_ad_ablation.v1"
+    source["router_features"] = {
+        "include_bai_features": True,
+        "include_consistency_features": True,
+        "include_representations": True,
+    }
+
+    _validate_compute_compatibility(
+        source, get_bir_ad_ablation("full").to_dict()
+    )
+
+
 def test_materialization_rejects_mixed_consistency_runtime() -> None:
     first = _signature_record("task-0")
     second = _signature_record("task-1")

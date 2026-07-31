@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 
-BIR_AD_ABLATION_PROTOCOL_VERSION = "stage5.bir_ad_ablation.v1"
+BIR_AD_ABLATION_PROTOCOL_VERSION = "stage5.bir_ad_ablation.v2"
 
 
 @dataclass(frozen=True)
@@ -20,10 +20,22 @@ class BIRADAblationSpec:
     clarity_weights: tuple[float, float, float, float, float]
     use_structural_boundary_weighting: bool
     disagreement_penalty: float
-    include_bai_features: bool
+    include_bai_core: bool
+    include_reliability: bool
+    include_disagreement: bool
     include_consistency_features: bool
     include_representations: bool
     protocol_version: str = BIR_AD_ABLATION_PROTOCOL_VERSION
+
+    @property
+    def include_bai_features(self) -> bool:
+        """Backward-compatible aggregate for callers that only need any scalar."""
+
+        return (
+            self.include_bai_core
+            or self.include_reliability
+            or self.include_disagreement
+        )
 
     def compute_kwargs(self) -> dict[str, Any]:
         return {
@@ -41,7 +53,12 @@ class BIRADAblationSpec:
             "description": self.description,
             "compute_kwargs": self.compute_kwargs(),
             "router_features": {
+                # Keep the aggregate field for artifact readers written against
+                # v1, but make the causal feature groups explicit in v2.
                 "include_bai_features": self.include_bai_features,
+                "include_bai_core": self.include_bai_core,
+                "include_reliability": self.include_reliability,
+                "include_disagreement": self.include_disagreement,
                 "include_consistency_features": (
                     self.include_consistency_features
                 ),
@@ -57,7 +74,9 @@ _ABLATIONS = (
         clarity_weights=(0.5, 0.5, 0.0, 0.0, 0.0),
         use_structural_boundary_weighting=False,
         disagreement_penalty=0.0,
-        include_bai_features=True,
+        include_bai_core=True,
+        include_reliability=False,
+        include_disagreement=False,
         include_consistency_features=False,
         include_representations=False,
     ),
@@ -67,7 +86,9 @@ _ABLATIONS = (
         clarity_weights=(1 / 3, 1 / 3, 1 / 3, 0.0, 0.0),
         use_structural_boundary_weighting=False,
         disagreement_penalty=0.0,
-        include_bai_features=True,
+        include_bai_core=True,
+        include_reliability=False,
+        include_disagreement=False,
         include_consistency_features=False,
         include_representations=False,
     ),
@@ -77,7 +98,9 @@ _ABLATIONS = (
         clarity_weights=(1 / 3, 1 / 3, 1 / 3, 0.0, 0.0),
         use_structural_boundary_weighting=True,
         disagreement_penalty=0.0,
-        include_bai_features=True,
+        include_bai_core=True,
+        include_reliability=False,
+        include_disagreement=False,
         include_consistency_features=False,
         include_representations=False,
     ),
@@ -87,7 +110,9 @@ _ABLATIONS = (
         clarity_weights=(0.2, 0.2, 0.2, 0.2, 0.2),
         use_structural_boundary_weighting=True,
         disagreement_penalty=0.0,
-        include_bai_features=True,
+        include_bai_core=True,
+        include_reliability=True,
+        include_disagreement=False,
         include_consistency_features=False,
         include_representations=False,
     ),
@@ -97,7 +122,9 @@ _ABLATIONS = (
         clarity_weights=(0.2, 0.2, 0.2, 0.2, 0.2),
         use_structural_boundary_weighting=True,
         disagreement_penalty=1.0,
-        include_bai_features=True,
+        include_bai_core=True,
+        include_reliability=True,
+        include_disagreement=True,
         include_consistency_features=False,
         include_representations=False,
     ),
@@ -107,7 +134,9 @@ _ABLATIONS = (
         clarity_weights=(0.2, 0.2, 0.2, 0.2, 0.2),
         use_structural_boundary_weighting=True,
         disagreement_penalty=1.0,
-        include_bai_features=True,
+        include_bai_core=True,
+        include_reliability=True,
+        include_disagreement=True,
         include_consistency_features=True,
         include_representations=False,
     ),
@@ -117,7 +146,9 @@ _ABLATIONS = (
         clarity_weights=(0.2, 0.2, 0.2, 0.2, 0.2),
         use_structural_boundary_weighting=True,
         disagreement_penalty=1.0,
-        include_bai_features=False,
+        include_bai_core=False,
+        include_reliability=False,
+        include_disagreement=False,
         include_consistency_features=False,
         include_representations=True,
     ),
@@ -127,7 +158,9 @@ _ABLATIONS = (
         clarity_weights=(0.2, 0.2, 0.2, 0.2, 0.2),
         use_structural_boundary_weighting=True,
         disagreement_penalty=1.0,
-        include_bai_features=True,
+        include_bai_core=True,
+        include_reliability=True,
+        include_disagreement=True,
         include_consistency_features=True,
         include_representations=True,
     ),

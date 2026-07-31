@@ -169,10 +169,17 @@ def _validate_compute_compatibility(
     source_ablation: Mapping[str, Any],
     target_ablation: Mapping[str, Any],
 ) -> None:
-    if source_ablation.get("protocol_version") != target_ablation.get(
-        "protocol_version"
+    source_protocol = source_ablation.get("protocol_version")
+    target_protocol = target_ablation.get("protocol_version")
+    compatible_protocols = {
+        "stage5.bir_ad_ablation.v1",
+        "stage5.bir_ad_ablation.v2",
+    }
+    if (
+        source_protocol not in compatible_protocols
+        or target_protocol not in compatible_protocols
     ):
-        raise ValueError("source and target ablation protocols disagree")
+        raise ValueError("source or target ablation protocol is incompatible")
     source_compute = _canonical_json(source_ablation.get("compute_kwargs"))
     target_compute = _canonical_json(target_ablation.get("compute_kwargs"))
     if source_compute != target_compute:
