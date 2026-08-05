@@ -96,5 +96,24 @@ def test_router_summary_aggregation_and_markdown_are_academic_tables() -> None:
     assert full["fold_count"] == 2
     assert full["image_auroc_mean"] == pytest.approx(0.75)
     assert "Strict ablation and downstream Router" in markdown
-    assert "Full BIR-AD Router against evaluator references" in markdown
+    assert "full Router against evaluator references" in markdown
     assert "Exact sign-flip p" in markdown
+
+
+def test_router_summary_accepts_explicit_fbdp_paired_comparison() -> None:
+    folds = ("fold0", "fold1")
+    records = []
+    for fold in folds:
+        records.append(_record(fold, "normal_only", auroc=0.60))
+        records.append(_record(fold, "normal_fbdp__full", auroc=0.66))
+
+    paired = paired_ablation_deltas(
+        records,
+        folds=folds,
+        variants=("normal_only", "normal_fbdp__full"),
+        comparisons=(("normal_only", "normal_fbdp__full", "add_fbdp"),),
+    )
+
+    assert {row["comparison"] for row in paired} == {"add_fbdp"}
+    auroc = next(row for row in paired if row["metric"] == "image_auroc")
+    assert auroc["mean_paired_delta"] == pytest.approx(0.06)

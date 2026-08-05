@@ -187,7 +187,9 @@ normalization, failures, or provenance are incompatible. Router feature files
 created under `stage5.bir_ad_ablation.v1` /
 `stage5.router_feature_bundle.v1` must not be used to claim strict
 feature-level causality. The downstream Router accepts only strict
-`stage5.router_feature_bundle.v2` inputs. Old artifacts can be converted from
+`stage5.router_feature_bundle.v2` BIR-only inputs. New feature materialization
+writes v3, while the Router keeps v2 read compatibility only when no FBDP
+field is present. Old artifacts can be converted from
 their immutable BIR signatures with:
 
 ```bash

@@ -1,4 +1,4 @@
-"""Summarize strict five-fold BIR-AD Router experiments.
+"""Summarize strict five-fold Stage 5 Router experiments.
 
 The summary requires every requested fold/variant artifact.  Missing or failed
 runs are reported as failures instead of being silently omitted.  Paired
@@ -92,6 +92,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--folds", nargs="+", default=DEFAULT_FOLDS)
     parser.add_argument("--variants", nargs="+", default=DEFAULT_VARIANTS)
+    parser.add_argument(
+        "--paired-comparison",
+        nargs=3,
+        action="append",
+        metavar=("REFERENCE", "CANDIDATE", "NAME"),
+        help="Repeatable paired comparison; defaults to the frozen BIR chain.",
+    )
+    parser.add_argument(
+        "--reference-variant",
+        default="full",
+        help="Variant shown against evaluator reference methods in the table.",
+    )
     return parser.parse_args(argv)
 
 
@@ -119,6 +131,11 @@ def main(argv: list[str] | None = None) -> int:
             records,
             folds=tuple(args.folds),
             variants=tuple(args.variants),
+            comparisons=(
+                tuple(tuple(item) for item in args.paired_comparison)
+                if args.paired_comparison
+                else PAIRED_COMPARISONS
+            ),
         )
         outputs = {
             "per_fold_metrics": str(
@@ -145,7 +162,11 @@ def main(argv: list[str] | None = None) -> int:
             "paper_tables": str(
                 atomic_write_text(
                     output_dir / "router_cv_tables.md",
-                    render_paper_tables(summary, paired),
+                    render_paper_tables(
+                        summary,
+                        paired,
+                        reference_variant=args.reference_variant,
+                    ),
                 )
             ),
         }
@@ -162,6 +183,12 @@ def main(argv: list[str] | None = None) -> int:
             "output_dir": args.output_dir,
             "folds": list(args.folds),
             "variants": list(args.variants),
+            "paired_comparisons": (
+                args.paired_comparison
+                if args.paired_comparison
+                else [list(item) for item in PAIRED_COMPARISONS]
+            ),
+            "reference_variant": args.reference_variant,
         },
         "input_hashes": input_hashes,
         "seed": None,
@@ -394,6 +421,7 @@ def paired_ablation_deltas(
     *,
     folds: Sequence[str],
     variants: Sequence[str],
+    comparisons: Sequence[tuple[str, str, str]] = PAIRED_COMPARISONS,
 ) -> list[dict[str, Any]]:
     by_key = {
         (str(row["fold"]), str(row["variant"]), str(row["method"])): row
@@ -401,7 +429,7 @@ def paired_ablation_deltas(
     }
     output: list[dict[str, Any]] = []
     requested = set(variants)
-    for reference, candidate, comparison in PAIRED_COMPARISONS:
+    for reference, candidate, comparison in comparisons:
         if reference not in requested or candidate not in requested:
             continue
         for metric in METRICS:
@@ -485,17 +513,25 @@ def exact_sign_flip_pvalue(differences: Sequence[float]) -> float:
 def render_paper_tables(
     summary: Sequence[Mapping[str, Any]],
     paired: Sequence[Mapping[str, Any]],
+    *,
+    reference_variant: str = "full",
 ) -> str:
     learned = [row for row in summary if row["method"] == "learned_router"]
-    full_methods = [row for row in summary if row["variant"] == "full"]
+    reference_methods = [
+        row for row in summary if row["variant"] == reference_variant
+    ]
+    if not reference_methods:
+        raise Stage5RouterSummaryError(
+            f"reference variant {reference_variant!r} is absent from summary"
+        )
     lines = [
-        "# Stage 5 BIR-AD Router five-fold results",
+        "# Stage 5 Router five-fold results",
         "",
-        "Values are fold mean ± sample standard deviation. F1-max is evaluator-only.",
+        "Values are fold mean +/- sample standard deviation. F1-max is evaluator-only.",
         "",
         "## Strict ablation and downstream Router",
         "",
-        "| Variant | Dim. | Selection acc. ↑ | Normalized utility ↑ | Regret ↓ | Image AUROC ↑ | Image AP ↑ |",
+        "| Variant | Dim. | Selection acc. (higher) | Normalized utility (higher) | Regret (lower) | Image AUROC (higher) | Image AP (higher) |",
         "|---|---:|---:|---:|---:|---:|---:|",
     ]
     for row in learned:
@@ -514,13 +550,13 @@ def render_paper_tables(
     lines.extend(
         [
             "",
-            "## Full BIR-AD Router against evaluator references",
+            f"## {reference_variant} Router against evaluator references",
             "",
-            "| Method | Selection acc. ↑ | Normalized utility ↑ | Regret ↓ | Image AUROC ↑ | Image AP ↑ | Runtime ms ↓ |",
+            "| Method | Selection acc. (higher) | Normalized utility (higher) | Regret (lower) | Image AUROC (higher) | Image AP (higher) | Runtime ms (lower) |",
             "|---|---:|---:|---:|---:|---:|---:|",
         ]
     )
-    for row in full_methods:
+    for row in reference_methods:
         lines.append(
             "| {method} | {selection} | {utility} | {regret} | "
             "{auroc} | {ap} | {runtime} |".format(
@@ -541,7 +577,7 @@ def render_paper_tables(
             "",
             "## Paired fold ablation deltas (Image AUROC)",
             "",
-            "| Added component | Candidate − reference | Positive folds | Exact sign-flip p |",
+            "| Added component | Candidate - reference | Positive folds | Exact sign-flip p |",
             "|---|---:|---:|---:|",
         ]
     )

@@ -132,6 +132,72 @@ def test_router_feature_reader_rejects_schema_drift_and_forbidden_input(
         )
 
 
+def test_router_feature_reader_projects_all_fbdp_views(tmp_path: Path) -> None:
+    task_id = "task-0"
+    manifest = {
+        task_id: {
+            "task_id": task_id,
+            "dataset": "mvtec",
+            "category": "bottle",
+            "k_shot": "2",
+            "seed": "0",
+            "support_set_id": "support-0",
+        }
+    }
+    path = tmp_path / "router_features.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "protocol_version": ROUTER_FEATURE_BUNDLE_PROTOCOL_VERSION,
+                "task_id": task_id,
+                "dataset": "mvtec",
+                "category": "bottle",
+                "k_shot": 2,
+                "seed": 0,
+                "support_set_id": "support-0",
+                "ablation_name": "full",
+                "fbdp_ablation_name": "full",
+                "feature_view": "normal_bir_fbdp",
+                "feature_names": ["normal_a", "bir_a", "fbdp_a"],
+                "values": [0.1, 0.2, 0.3],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    expected = {
+        "all": ("normal_a", "bir_a", "fbdp_a"),
+        "normal_only": ("normal_a",),
+        "normal_bir": ("normal_a", "bir_a"),
+        "normal_fbdp": ("normal_a", "fbdp_a"),
+        "normal_bir_fbdp": ("normal_a", "bir_a", "fbdp_a"),
+    }
+    for view, names in expected.items():
+        artifact = read_router_features(path, manifest, feature_view=view)
+        assert artifact.feature_names == names
+        assert artifact.source_feature_view == "normal_bir_fbdp"
+        assert artifact.source_ablation == "full"
+        assert artifact.source_fbdp_ablation == "full"
+        assert artifact.source_protocol_version == ROUTER_FEATURE_BUNDLE_PROTOCOL_VERSION
+
+    legacy = json.loads(path.read_text(encoding="utf-8"))
+    legacy["protocol_version"] = "stage5.router_feature_bundle.v2"
+    legacy["feature_names"] = ["normal_a", "bir_a"]
+    legacy["values"] = [0.1, 0.2]
+    legacy.pop("feature_view")
+    legacy.pop("fbdp_ablation_name")
+    path.write_text(json.dumps(legacy) + "\n", encoding="utf-8")
+    artifact = read_router_features(path, manifest, feature_view="normal_bir")
+    assert artifact.source_protocol_version == "stage5.router_feature_bundle.v2"
+
+    legacy["feature_names"].append("fbdp_a")
+    legacy["values"].append(0.3)
+    path.write_text(json.dumps(legacy) + "\n", encoding="utf-8")
+    with pytest.raises(Stage5RouterError, match="legacy protocol"):
+        read_router_features(path, manifest, feature_view="all")
+
+
 def test_stage5_router_cli_writes_label_free_predictions_and_evaluator_metrics(
     tmp_path: Path,
 ) -> None:

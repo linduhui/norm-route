@@ -39,8 +39,8 @@ realized expert outcomes, Oracle answers, or teacher utilities at inference.
 | `BIR-AD` | Boundary-Informed Reweighting for Anomaly Detection | Produces boundary clarity/ambiguity evidence for routing; it does not modify external expert algorithms. | Core v4, strict alignment, fold normalization, cached support context, CUDA consistency, diagnostics, strict v2 causal feature groups, and fold-safe learned Router validation implemented. |
 | `BAI-S` | Support Boundary Ambiguity Index | Support-only boundary ambiguity summary. | Implemented with variance, reliability, and patch consistency. |
 | `BAI-Q` | Query Boundary Ambiguity Index | Query-relative boundary ambiguity summary. | Implemented with signed shift and support compatibility. |
-| `FBDP-AD` | Foreground-Background Decoupled Normal Prototypes for Anomaly Detection | Describes whether foreground and background normal patterns are separable and whether query patches are explained by either prototype bank. | Planned; formula must follow Section 6. |
-| `FBC` | Foreground-Background Confusion | Support-only overlap/confusion between foreground and background prototype banks. | Planned. |
+| `FBDP-AD` | Foreground-Background Decoupled Normal Prototypes for Anomaly Detection | Describes whether foreground and background normal patterns are separable and whether query patches are explained by either prototype bank. | Core v2, batch signatures, diagnostics, strict Router views, ablations, and experiment runners implemented; real-data category-held-out validation pending. |
+| `FBC` | Foreground-Background Confusion | Support-only overlap/confusion between foreground and background prototype banks. | Implemented as symmetric positive-cosine prototype overlap. |
 | `LGD` | Local-Global Deviation | Query deviation that contrasts global residuals with local patch residuals. | Planned derived query feature. |
 | `ECPB` | Expert Capability Profile Bank | Fold-specific, training-category-only representations of expert strengths, costs, and failure behaviour. | Planned. |
 | `RCR` | Risk-Cost Routing Head | Predicts expert risk/uncertainty/cost and selects one expert under the frozen budget. | Planned evolution of Stage 4 cost-aware routing. |
@@ -189,6 +189,21 @@ normal background patch would then incorrectly receive a larger residual.
 support-derived objectness gate `g_obj` must weaken or disable FBDP-AD for
 texture-like or otherwise non-bimodal support sets; no test label or manually
 encoded test-category list may control this gate.
+
+The v2 implementation uses border appearance, spatial centrality, and
+local-window cross-support feature consistency to derive support objectness.
+The background bank pools all border and low-objectness candidates.  The
+foreground bank pools stable, non-border candidates above a support-derived
+background-distance quantile.  Both deterministic spherical k-means and
+prototype pooling are supported.  The continuous gate combines prototype
+separation, foreground/background objectness contrast, and foreground
+stability; its gated query residual is `g_obj * (r_fg + r_bg)`.
+
+The gate also incorporates assignment confidence, prototype compactness,
+foreground support coverage, and leave-one-support-out reconstruction. K=1
+uses an explicit validity mask and shrink policy. Full formulas, artifact
+contracts, commands, ablations, and the empirical claim boundary are frozen in
+`docs/stage5_fbdp_ad.md`.
 
 ## 7. ECPB
 

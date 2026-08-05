@@ -21,7 +21,9 @@ import sys
 import tempfile
 from typing import Any, Mapping, Sequence
 
-from ..router.feature_bundle import ROUTER_FEATURE_BUNDLE_PROTOCOL_VERSION
+from ..router.feature_bundle import (
+    ROUTER_FEATURE_BUNDLE_COMPATIBLE_PROTOCOL_VERSIONS,
+)
 from ..router.learned_router import (
     Stage5RouterError,
     fit_linear_router,
@@ -70,6 +72,9 @@ class FeatureArtifact:
     values: Any
     source_ablation: str
     sha256: str
+    source_feature_view: str
+    source_fbdp_ablation: str
+    source_protocol_version: str
 
 
 @dataclass(frozen=True)
@@ -87,10 +92,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--fold", required=True, choices=tuple(f"fold{i}" for i in range(5)))
     parser.add_argument("--variant", required=True)
     parser.add_argument(
+        "--bir-ablation",
+        help="Expected BIR-AD ablation provenance for views that include BIR.",
+    )
+    parser.add_argument(
+        "--fbdp-ablation",
+        help="Expected FBDP-AD ablation provenance for views that include FBDP.",
+    )
+    parser.add_argument(
         "--feature-view",
-        choices=("all", "normal_only"),
+        choices=(
+            "all",
+            "normal_only",
+            "normal_bir",
+            "normal_fbdp",
+            "normal_bir_fbdp",
+        ),
         default="all",
-        help="normal_only is the Stage 5 no-BIR learned baseline.",
+        help="Select a strict causal prefix view from one Router bundle.",
     )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--device", default="cpu")
@@ -130,12 +149,50 @@ def main(argv: list[str] | None = None) -> int:
             manifest_by_task,
             feature_view=args.feature_view,
         )
+        selected_bir = args.feature_view in {
+            "all", "normal_bir", "normal_bir_fbdp"
+        } and artifact.source_feature_view in {"normal_bir", "normal_bir_fbdp"}
+        selected_fbdp = args.feature_view in {
+            "all", "normal_fbdp", "normal_bir_fbdp"
+        } and artifact.source_feature_view in {"normal_fbdp", "normal_bir_fbdp"}
+        expected_bir = args.bir_ablation
+        expected_fbdp = args.fbdp_ablation
+        if (
+            args.feature_view == "normal_bir"
+            or (
+                args.feature_view == "all"
+                and artifact.source_feature_view == "normal_bir"
+            )
+        ) and expected_bir is None:
+            expected_bir = args.variant
+        if (
+            args.feature_view == "normal_fbdp"
+            or (
+                args.feature_view == "all"
+                and artifact.source_feature_view == "normal_fbdp"
+            )
+        ) and expected_fbdp is None:
+            expected_fbdp = args.variant
         if (
             args.feature_view == "all"
-            and artifact.source_ablation != args.variant
+            and artifact.source_feature_view == "normal_bir_fbdp"
+            and (expected_bir is None or expected_fbdp is None)
         ):
             raise Stage5RouterError(
-                "Router variant and source BIR-AD ablation disagree"
+                "combined all-feature view requires --bir-ablation and "
+                "--fbdp-ablation"
+            )
+        if selected_bir and expected_bir and artifact.source_ablation != expected_bir:
+            raise Stage5RouterError(
+                "Router source BIR-AD ablation disagrees with --bir-ablation"
+            )
+        if (
+            selected_fbdp
+            and expected_fbdp
+            and artifact.source_fbdp_ablation != expected_fbdp
+        ):
+            raise Stage5RouterError(
+                "Router source FBDP-AD ablation disagrees with --fbdp-ablation"
             )
         if args.feature_view == "normal_only" and args.variant != "normal_only":
             raise Stage5RouterError(
@@ -272,6 +329,9 @@ def main(argv: list[str] | None = None) -> int:
                 "evaluator_only_after_label_free_predictions"
             ),
             "source_ablation": artifact.source_ablation,
+            "source_fbdp_ablation": artifact.source_fbdp_ablation,
+            "source_feature_view": artifact.source_feature_view,
+            "source_feature_protocol": artifact.source_protocol_version,
             "feature_dimension": len(artifact.feature_names),
             "experts": list(experts),
             "task_counts": {
@@ -304,6 +364,10 @@ def main(argv: list[str] | None = None) -> int:
             "task_counts": metrics["task_counts"],
             "selected_l2": fit.model.l2,
             "training_backend": fit.model.backend,
+            "source_feature_view": artifact.source_feature_view,
+            "source_bir_ablation": artifact.source_ablation,
+            "source_fbdp_ablation": artifact.source_fbdp_ablation,
+            "source_feature_protocol": artifact.source_protocol_version,
         }
     except Exception as exc:
         failures.append(
@@ -328,6 +392,8 @@ def main(argv: list[str] | None = None) -> int:
             "fold": args.fold,
             "variant": args.variant,
             "feature_view": args.feature_view,
+            "bir_ablation": args.bir_ablation,
+            "fbdp_ablation": args.fbdp_ablation,
             "device": args.device,
             "epochs": args.epochs,
             "batch_size": args.batch_size,
@@ -447,6 +513,9 @@ def read_router_features(
     selected_names: tuple[str, ...] | None = None
     selected_indices = None
     source_ablation: str | None = None
+    source_feature_view: str | None = None
+    source_fbdp_ablation: str | None = None
+    source_protocol_version: str | None = None
     seen: set[str] = set()
     digest = hashlib.sha256()
     with source.open("rb") as handle:
@@ -462,7 +531,8 @@ def read_router_features(
                 raise Stage5RouterError(
                     f"{source}:{line_number} is invalid JSON"
                 ) from exc
-            if row.get("protocol_version") != ROUTER_FEATURE_BUNDLE_PROTOCOL_VERSION:
+            row_protocol = str(row.get("protocol_version", ""))
+            if row_protocol not in ROUTER_FEATURE_BUNDLE_COMPATIBLE_PROTOCOL_VERSIONS:
                 raise Stage5RouterError(
                     f"{source}:{line_number} has incompatible feature protocol"
                 )
@@ -486,23 +556,46 @@ def read_router_features(
                         f"disagrees on {field}"
                     )
             names = tuple(str(item) for item in row.get("feature_names", ()))
+            if (
+                row_protocol == "stage5.router_feature_bundle.v2"
+                and any(name.startswith("fbdp_") for name in names)
+            ):
+                raise Stage5RouterError(
+                    f"{source}:{line_number} uses FBDP fields with the legacy protocol"
+                )
             values = row.get("values")
             if selected_names is None:
                 _assert_feature_names_safe(names)
                 source_names = names
-                if feature_view == "normal_only":
+                if feature_view == "all":
+                    selected_indices = np.arange(len(names), dtype=np.int64)
+                else:
+                    prefixes = {
+                        "normal_only": ("normal_",),
+                        "normal_bir": ("normal_", "bir_"),
+                        "normal_fbdp": ("normal_", "fbdp_"),
+                        "normal_bir_fbdp": ("normal_", "bir_", "fbdp_"),
+                    }.get(feature_view)
+                    if prefixes is None:
+                        raise Stage5RouterError("unknown Router feature view")
                     selected_indices = np.asarray(
                         [
                             index
                             for index, name in enumerate(names)
-                            if name.startswith("normal_")
+                            if name.startswith(prefixes)
                         ],
                         dtype=np.int64,
                     )
-                elif feature_view == "all":
-                    selected_indices = np.arange(len(names), dtype=np.int64)
-                else:
-                    raise Stage5RouterError("unknown Router feature view")
+                    required = set(prefixes)
+                    observed = {
+                        prefix
+                        for prefix in prefixes
+                        if any(name.startswith(prefix) for name in names)
+                    }
+                    if observed != required:
+                        raise Stage5RouterError(
+                            f"Router artifact cannot provide feature_view={feature_view!r}"
+                        )
                 if selected_indices.size == 0:
                     raise Stage5RouterError("Router feature view is empty")
                 selected_names = tuple(names[int(index)] for index in selected_indices)
@@ -510,10 +603,28 @@ def read_router_features(
                     (len(task_ids), len(selected_names)), dtype=np.float32
                 )
                 source_ablation = str(row.get("ablation_name", ""))
+                source_feature_view = str(
+                    row.get("feature_view") or _infer_feature_view(names)
+                )
+                source_fbdp_ablation = str(
+                    row.get("fbdp_ablation_name", "not_applicable")
+                )
+                source_protocol_version = row_protocol
             elif names != source_names:
                 raise Stage5RouterError("Router feature schema changed within file")
+            if row_protocol != source_protocol_version:
+                raise Stage5RouterError("Router feature file mixes protocol versions")
             if str(row.get("ablation_name", "")) != source_ablation:
                 raise Stage5RouterError("Router feature file mixes ablations")
+            row_feature_view = str(
+                row.get("feature_view") or _infer_feature_view(names)
+            )
+            if row_feature_view != source_feature_view:
+                raise Stage5RouterError("Router feature file mixes feature views")
+            if str(row.get("fbdp_ablation_name", "not_applicable")) != source_fbdp_ablation:
+                raise Stage5RouterError(
+                    "Router feature file mixes FBDP-AD ablations"
+                )
             try:
                 value_array = np.asarray(values, dtype=np.float64)
             except (TypeError, ValueError) as exc:
@@ -541,7 +652,22 @@ def read_router_features(
         values=matrix,
         source_ablation=source_ablation or "",
         sha256=digest.hexdigest(),
+        source_feature_view=source_feature_view or "",
+        source_fbdp_ablation=source_fbdp_ablation or "not_applicable",
+        source_protocol_version=source_protocol_version or "",
     )
+
+
+def _infer_feature_view(names: Sequence[str]) -> str:
+    has_bir = any(name.startswith("bir_") for name in names)
+    has_fbdp = any(name.startswith("fbdp_") for name in names)
+    if has_bir and has_fbdp:
+        return "normal_bir_fbdp"
+    if has_bir:
+        return "normal_bir"
+    if has_fbdp:
+        return "normal_fbdp"
+    return "normal_only"
 
 
 def read_evaluator_outcomes(

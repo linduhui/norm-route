@@ -1,0 +1,17 @@
+{
+  "protocol_version": "stage5.fbdp_ad_ablation.v1",
+  "ablation_order": [
+    "single_bank",
+    "no_fbc",
+    "no_objectness_gate",
+    "border_only_background",
+    "low_objectness_only_background",
+    "no_cross_support_consistency",
+    "pooling",
+    "same_position_consistency",
+    "raw_residual_only",
+    "full"
+  ],
+  "selection_rule": "All hyperparameters and ablation choices are selected using training and validation categories only; target test outcomes never update them.",
+  "comparison_contract": "All variants use identical tasks, frozen backbone, category fold, support_set_id, Router optimization, and evaluator isolation."
+}

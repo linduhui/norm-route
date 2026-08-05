@@ -1,0 +1,79 @@
+{
+  "protocol_version": "stage5.fbdp_ad_experiments.v1",
+  "status": "execution_plan_only_no_results_embedded",
+  "method": "FBDP-AD v2",
+  "frozen_inputs": {
+    "query": "one query image per task",
+    "support": "K normal images from the official train/good split",
+    "allowed_k_shot": [1, 2, 4, 8],
+    "same_support_set_id_across_methods": true,
+    "forbidden_model_inputs": [
+      "target test label",
+      "target test mask",
+      "defect_type",
+      "anomaly_type",
+      "realized expert outcome"
+    ]
+  },
+  "frozen_default_compute": {
+    "background_candidates": "border union low support-derived objectness",
+    "foreground_candidates": "cross-support consistent non-border patches above the background-distance quantile",
+    "prototype_method": "deterministic spherical k-means",
+    "consistency_mode": "local_window",
+    "query_bank_mode": "decoupled",
+    "k1_gate_policy": "shrink",
+    "objectness_gate": "support-derived continuous reliability gate"
+  },
+  "priority_1_method_validity": {
+    "comparisons": [
+      "single_bank vs full",
+      "no_fbc vs full",
+      "no_objectness_gate vs full",
+      "border_only_background vs full",
+      "low_objectness_only_background vs full",
+      "no_cross_support_consistency vs full",
+      "pooling vs full",
+      "same_position_consistency vs full",
+      "raw_residual_only vs full"
+    ],
+    "required_label_free_diagnostics": [
+      "complete signature-or-failure coverage",
+      "finite FBC and residuals",
+      "non-empty foreground/background candidate and prototype banks",
+      "gate distribution and saturation",
+      "foreground fallback rate",
+      "K=1 validity masks and gate policy"
+    ]
+  },
+  "priority_2_router_integration": {
+    "feature_views": [
+      "normal_only",
+      "normal_bir",
+      "normal_fbdp",
+      "normal_bir_fbdp"
+    ],
+    "primary_paired_comparisons": [
+      ["normal_only", "normal_fbdp__full", "add_fbdp"],
+      ["normal_only", "normal_bir", "add_bir"],
+      ["normal_bir", "normal_bir_fbdp", "add_fbdp_to_bir"],
+      ["normal_fbdp__full", "normal_bir_fbdp", "add_bir_to_fbdp"]
+    ],
+    "router_contract": "same category folds, tasks, support_set_id, expert outcomes, optimizer and validation selection for every view"
+  },
+  "priority_3_research_evidence": {
+    "folds": ["fold0", "fold1", "fold2", "fold3", "fold4"],
+    "selection": "training and validation categories only",
+    "test": "label-free predictions frozen before evaluator join",
+    "report": [
+      "mean and standard deviation across five category-held-out folds",
+      "same-fold paired effect and fold sign consistency",
+      "exact sign-flip p-value with its coarse five-fold resolution stated",
+      "selection accuracy and normalized utility",
+      "oracle regret",
+      "image AUROC, AP and F1-max in evaluator-only output",
+      "end-to-end runtime",
+      "gate/fallback/prototype diagnostics split by dataset, category and K"
+    ],
+    "claim_rule": "Do not claim superiority or innovation effectiveness until complete real-data runs satisfy the frozen protocol."
+  }
+}

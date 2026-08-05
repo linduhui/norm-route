@@ -9,7 +9,9 @@ failure-recording rules.
 The names, scientific meanings, maturity status, and future implementation
 boundaries of NDSE, NIV/NSVS, BIR-AD, FBDP-AD, ECPB, and RCR are frozen in
 `docs/stage5_innovation_design.md`. Future Stage 5 Goals must follow that
-baseline unless they explicitly version and justify a protocol revision.
+baseline unless they explicitly version and justify a protocol revision. The
+executable FBDP-AD v2 method and evaluation contract are detailed in
+`docs/stage5_fbdp_ad.md`.
 
 ## Objective
 
