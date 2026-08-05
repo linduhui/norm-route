@@ -3,11 +3,31 @@ from __future__ import annotations
 import pytest
 
 from src.normroute.cli.summarize_stage5_router import (
+    _expected_feature_view,
     aggregate_records,
     exact_sign_flip_pvalue,
     paired_ablation_deltas,
     render_paper_tables,
 )
+
+
+@pytest.mark.parametrize(
+    ("variant", "expected"),
+    (
+        ("normal_only", "normal_only"),
+        ("normal_bir", "normal_bir"),
+        ("normal_fbdp__full", "normal_fbdp"),
+        ("normal_fbdp__single_bank", "normal_fbdp"),
+        ("normal_bir_fbdp", "normal_bir_fbdp"),
+        ("normal_bir_fbdp__full", "normal_bir_fbdp"),
+        ("sigma_l2", "all"),
+        ("full", "all"),
+    ),
+)
+def test_summary_maps_variant_names_to_strict_feature_views(
+    variant: str, expected: str
+) -> None:
+    assert _expected_feature_view(variant) == expected
 
 
 def _record(

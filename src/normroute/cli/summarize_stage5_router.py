@@ -266,10 +266,13 @@ def load_cv_records(
                 raise Stage5RouterSummaryError(
                     f"Router run config provenance mismatch: {run_path}"
                 )
-            expected_view = "normal_only" if variant == "normal_only" else "all"
-            if config.get("feature_view") != expected_view:
+            expected_view = _expected_feature_view(variant)
+            observed_view = config.get("feature_view")
+            if observed_view != expected_view:
                 raise Stage5RouterSummaryError(
-                    f"Router run has invalid feature view: {run_path}"
+                    "Router run has invalid feature view: "
+                    f"expected={expected_view!r}, observed={observed_view!r}, "
+                    f"run={run_path}"
                 )
             for name in (
                 "epochs",
@@ -366,6 +369,24 @@ def load_cv_records(
                 records.append(record)
             predictions.append(str(predictions_path))
     return records, hashes, predictions
+
+
+def _expected_feature_view(variant: str) -> str:
+    """Map an experiment variant to its strict Router feature projection."""
+
+    if variant == "normal_only":
+        return "normal_only"
+    if variant == "normal_bir" or variant.startswith("normal_bir__"):
+        return "normal_bir"
+    if variant == "normal_fbdp" or variant.startswith("normal_fbdp__"):
+        return "normal_fbdp"
+    if variant == "normal_bir_fbdp" or variant.startswith(
+        "normal_bir_fbdp__"
+    ):
+        return "normal_bir_fbdp"
+    # Legacy strict BIR ablations use the complete source artifact and retain
+    # feature_view=all.  Keeping this fallback preserves their summaries.
+    return "all"
 
 
 def aggregate_records(
