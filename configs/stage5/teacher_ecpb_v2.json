@@ -1,0 +1,59 @@
+{
+  "protocol_version": "stage5.teacher_ecpb_experiment.v2",
+  "teacher": {
+    "calibration": "leave_one_train_category_out_weighted_platt",
+    "repeat_weighting": "equal_category_equal_query_inverse_variant_frequency",
+    "proper_loss": "negative_log_correctness_probability",
+    "temperatures": [0.05, 0.1, 0.25, 0.5, 1.0],
+    "cost_weight": 0.05,
+    "failure_penalty": 2.0,
+    "temperature_selection_split": "validation_only",
+    "serialized_split": "train_only"
+  },
+  "capability_bank": {
+    "statistics_split": "train_only",
+    "difficulty_quantiles": [0.3333333333333333, 0.6666666666666666],
+    "skills": ["boundary", "fgbg", "lowshot", "texture"],
+    "costs": ["latency_p50", "latency_p95"],
+    "reliability": ["failure_rate", "failure_counts"],
+    "bootstrap_unit": "category",
+    "bootstrap_replicates": 1000,
+    "bootstrap_seed": 0
+  },
+  "router": {
+    "supervision": "soft_teacher",
+    "capability_weight_grid": [0.0, 0.25, 0.5],
+    "uncertainty_weight_grid": [0.0, 0.1],
+    "cost_weight_grid": [0.0, 0.05, 0.1],
+    "hyperparameter_split": "validation_only",
+    "test_visibility": "after_predictions_are_frozen"
+  },
+  "ablations": {
+    "hard_oracle": {"supervision": "hard_oracle"},
+    "soft_no_crossfit": {"teacher_cli": ["--calibration-strategy", "full_train"]},
+    "soft_no_repeat_weighting": {"teacher_cli": ["--repeat-weighting", "uniform_task"]},
+    "soft_no_boundary_skill": {"router_cli": ["--capability-skills", "fgbg", "lowshot", "texture"]},
+    "soft_no_fgbg_skill": {"router_cli": ["--capability-skills", "boundary", "lowshot", "texture"]},
+    "soft_no_lowshot_skill": {"router_cli": ["--capability-skills", "boundary", "fgbg", "texture"]},
+    "soft_no_texture_skill": {"router_cli": ["--capability-skills", "boundary", "fgbg", "lowshot"]},
+    "soft_no_capability": {"capability_weight_grid": [0.0]},
+    "soft_no_uncertainty": {"uncertainty_weight_grid": [0.0]},
+    "soft_no_cost": {"cost_weight_grid": [0.0]},
+    "soft_static_profile": {"router_cli": ["--capability-mode", "static"]},
+    "soft_full_ecpb": {"router_cli": ["--capability-mode", "conditional"]}
+  },
+  "required_reports": [
+    "five_fold_mean_std",
+    "paired_category_bootstrap_ci",
+    "selection_accuracy",
+    "normalized_utility",
+    "oracle_regret",
+    "image_auroc",
+    "image_ap",
+    "average_runtime_ms",
+    "failure_rate",
+    "ece_or_brier",
+    "teacher_entropy_by_category"
+  ],
+  "claims_policy": "configuration_only_until_real_runs_complete"
+}

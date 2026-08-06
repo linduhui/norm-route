@@ -65,6 +65,30 @@ def test_linear_router_is_deterministic_and_uses_train_normalization() -> None:
     )
 
 
+def test_linear_router_accepts_soft_targets_and_query_weights() -> None:
+    train_x = np.asarray([[3.0, 0.0], [2.0, 0.0], [0.0, 3.0], [0.0, 2.0]])
+    soft_y = np.asarray([[0.9, 0.1], [0.8, 0.2], [0.1, 0.9], [0.2, 0.8]])
+    validation_y = np.asarray([0, 0, 1, 1])
+    fit = fit_linear_router(
+        train_x,
+        soft_y,
+        train_x,
+        validation_y,
+        feature_names=("normal_a", "bir_query_bai"),
+        experts=("patchcore", "winclip"),
+        train_sample_weights=np.asarray([0.5, 0.5, 1.0, 1.0]),
+        validation_sample_weights=np.ones(4),
+        l2_grid=(0.0,),
+        epochs=100,
+        batch_size=4,
+        learning_rate=0.1,
+        seed=3,
+    )
+
+    assert np.array_equal(fit.model.predict_indices(train_x), validation_y)
+    assert fit.frontier[0]["validation_cross_entropy"] > 0.0
+
+
 def test_router_feature_reader_rejects_schema_drift_and_forbidden_input(
     tmp_path: Path,
 ) -> None:
