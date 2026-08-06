@@ -28,6 +28,8 @@ from ..router.learned_router import (
     Stage5RouterError,
     fit_linear_router,
 )
+from ..router.expert_bank import read_capability_bank
+from ..router.teacher import read_teacher_parquet
 from ..routing.quality_metrics import (
     compute_auroc,
     compute_average_precision,
@@ -89,6 +91,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--router-features", required=True)
     parser.add_argument("--fold-manifest", required=True)
     parser.add_argument("--routing-matrix", required=True)
+    parser.add_argument(
+        "--teacher-data",
+        help="Evaluator-only train teacher.parquet; enables soft supervision.",
+    )
+    parser.add_argument(
+        "--capability-bank",
+        help="Optional train-only capability_bank.json used by risk-cost selection.",
+    )
+    parser.add_argument(
+        "--supervision",
+        choices=("soft_teacher", "hard_oracle"),
+        default="hard_oracle",
+        help="hard_oracle is retained only as an ablation/legacy path.",
+    )
     parser.add_argument("--fold", required=True, choices=tuple(f"fold{i}" for i in range(5)))
     parser.add_argument("--variant", required=True)
     parser.add_argument(
@@ -123,6 +139,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=(0.0, 1e-4, 1e-3),
     )
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--capability-weight-grid", type=float, nargs="+", default=(0.0, 0.25, 0.5))
+    parser.add_argument("--uncertainty-weight-grid", type=float, nargs="+", default=(0.0, 0.1))
+    parser.add_argument("--cost-weight-grid", type=float, nargs="+", default=(0.0, 0.05, 0.1))
+    parser.add_argument(
+        "--capability-mode",
+        choices=("conditional", "static"),
+        default="conditional",
+    )
+    parser.add_argument(
+        "--capability-skills",
+        nargs="+",
+        choices=("boundary", "fgbg", "lowshot", "texture"),
+        default=("boundary", "fgbg", "lowshot", "texture"),
+    )
     return parser.parse_args(argv)
 
 
@@ -198,11 +228,19 @@ def main(argv: list[str] | None = None) -> int:
             raise Stage5RouterError(
                 "normal_only feature view requires variant=normal_only"
             )
+        if args.supervision == "soft_teacher" and not args.teacher_data:
+            raise Stage5RouterError("soft_teacher supervision requires --teacher-data")
+        if args.teacher_data and args.supervision != "soft_teacher":
+            raise Stage5RouterError("--teacher-data requires --supervision soft_teacher")
         input_hashes = {
             "router_features": artifact.sha256,
             "fold_manifest": file_sha256(args.fold_manifest),
             "routing_matrix": file_sha256(args.routing_matrix),
         }
+        if args.teacher_data:
+            input_hashes["teacher_data"] = file_sha256(args.teacher_data)
+        if args.capability_bank:
+            input_hashes["capability_bank"] = file_sha256(args.capability_bank)
         np = _numpy()
         index_by_task = {
             task_id: index for index, task_id in enumerate(artifact.task_ids)
@@ -230,9 +268,22 @@ def main(argv: list[str] | None = None) -> int:
         supervision_outcomes, experts = read_evaluator_outcomes(
             args.routing_matrix, supervision_manifest
         )
-        train_targets = oracle_targets(
-            split_ids["train"], supervision_outcomes, experts
-        )
+        train_sample_weights = None
+        if args.supervision == "soft_teacher":
+            train_targets, train_sample_weights, teacher_experts = read_soft_teacher_supervision(
+                args.teacher_data,
+                task_ids=split_ids["train"],
+                fold=args.fold,
+                train_categories={
+                    row["category"] for row in manifest_rows if row["split"] == "train"
+                },
+            )
+            if teacher_experts != experts:
+                raise Stage5RouterError("teacher and routing matrix expert sets disagree")
+        else:
+            train_targets = oracle_targets(
+                split_ids["train"], supervision_outcomes, experts
+            )
         validation_targets = oracle_targets(
             split_ids["val"], supervision_outcomes, experts
         )
@@ -249,12 +300,58 @@ def main(argv: list[str] | None = None) -> int:
             learning_rate=args.learning_rate,
             seed=args.seed,
             device=args.device,
+            train_sample_weights=train_sample_weights,
         )
+
+        capability_policy: dict[str, Any] | None = None
+        capability_bank: dict[str, Any] | None = None
+        if args.capability_bank:
+            capability_bank = read_capability_bank(args.capability_bank)
+            train_categories = {
+                row["category"] for row in manifest_rows if row["split"] == "train"
+            }
+            if capability_bank.get("fold") != args.fold or set(
+                capability_bank.get("train_categories", ())
+            ) != train_categories:
+                raise Stage5RouterError("capability bank fold/train categories disagree")
+            capability_policy = select_capability_policy(
+                fit.model.predict_proba(artifact.values[split_indices["val"]]),
+                artifact.values[split_indices["val"]],
+                split_ids["val"],
+                manifest_by_task,
+                supervision_outcomes,
+                experts,
+                artifact.feature_names,
+                capability_bank,
+                capability_weight_grid=args.capability_weight_grid,
+                uncertainty_weight_grid=args.uncertainty_weight_grid,
+                cost_weight_grid=args.cost_weight_grid,
+                capability_mode=args.capability_mode,
+                enabled_skills=args.capability_skills,
+            )
 
         # Freeze predictions before test labels are passed to evaluator metrics.
         test_values = artifact.values[split_indices["test"]]
         probabilities = fit.model.predict_proba(test_values)
-        selected_indices = np.argmax(probabilities, axis=1)
+        if capability_bank is None or capability_policy is None:
+            selected_indices = np.argmax(probabilities, axis=1)
+            selection_objectives = -np.log(np.maximum(probabilities, 1e-12))
+        else:
+            selection_objectives = capability_objectives(
+                probabilities,
+                test_values,
+                split_ids["test"],
+                manifest_by_task,
+                experts,
+                artifact.feature_names,
+                capability_bank,
+                capability_weight=capability_policy["capability_weight"],
+                uncertainty_weight=capability_policy["uncertainty_weight"],
+                cost_weight=capability_policy["cost_weight"],
+                capability_mode=args.capability_mode,
+                enabled_skills=args.capability_skills,
+            )
+            selected_indices = np.argmin(selection_objectives, axis=1)
         selected = {
             task_id: experts[int(index)]
             for task_id, index in zip(split_ids["test"], selected_indices)
@@ -273,8 +370,14 @@ def main(argv: list[str] | None = None) -> int:
                     expert: float(probability)
                     for expert, probability in zip(experts, row)
                 },
+                "selection_objectives": {
+                    expert: float(objective)
+                    for expert, objective in zip(experts, objective_row)
+                },
             }
-            for task_id, row in zip(split_ids["test"], probabilities)
+            for task_id, row, objective_row in zip(
+                split_ids["test"], probabilities, selection_objectives
+            )
         ]
         predictions_path = _atomic_write_jsonl(
             output_dir / PREDICTIONS_NAME, prediction_rows
@@ -320,11 +423,9 @@ def main(argv: list[str] | None = None) -> int:
             "fold": args.fold,
             "variant": args.variant,
             "feature_view": args.feature_view,
-            "model_kind": "class_balanced_linear_softmax",
+            "model_kind": "class_balanced_linear_softmax_soft_targets",
             "standardization": "train_only_feature_mean_std",
-            "supervision_target": (
-                "train_val_per_sample_best_oriented_final_score"
-            ),
+            "supervision_target": args.supervision,
             "test_evaluation_scope": (
                 "evaluator_only_after_label_free_predictions"
             ),
@@ -339,6 +440,9 @@ def main(argv: list[str] | None = None) -> int:
             },
             "selected_l2": fit.model.l2,
             "validation_frontier": list(fit.frontier),
+            "capability_policy": capability_policy,
+            "capability_mode": args.capability_mode,
+            "capability_skills": list(args.capability_skills),
             "global_best_expert_from_train": global_best,
             "methods": {
                 "learned_router": learned_metrics,
@@ -364,6 +468,8 @@ def main(argv: list[str] | None = None) -> int:
             "task_counts": metrics["task_counts"],
             "selected_l2": fit.model.l2,
             "training_backend": fit.model.backend,
+            "supervision": args.supervision,
+            "capability_policy": capability_policy,
             "source_feature_view": artifact.source_feature_view,
             "source_bir_ablation": artifact.source_ablation,
             "source_fbdp_ablation": artifact.source_fbdp_ablation,
@@ -389,6 +495,9 @@ def main(argv: list[str] | None = None) -> int:
             "router_features": args.router_features,
             "fold_manifest": args.fold_manifest,
             "routing_matrix": args.routing_matrix,
+            "teacher_data": args.teacher_data,
+            "capability_bank": args.capability_bank,
+            "supervision": args.supervision,
             "fold": args.fold,
             "variant": args.variant,
             "feature_view": args.feature_view,
@@ -400,11 +509,14 @@ def main(argv: list[str] | None = None) -> int:
             "learning_rate": args.learning_rate,
             "l2_grid": list(args.l2_grid),
             "seed": args.seed,
-            "model_kind": "class_balanced_linear_softmax",
+            "capability_weight_grid": list(args.capability_weight_grid),
+            "uncertainty_weight_grid": list(args.uncertainty_weight_grid),
+            "cost_weight_grid": list(args.cost_weight_grid),
+            "capability_mode": args.capability_mode,
+            "capability_skills": list(args.capability_skills),
+            "model_kind": "class_balanced_linear_softmax_soft_targets",
             "standardization": "train_only_feature_mean_std",
-            "supervision_target": (
-                "train_val_per_sample_best_oriented_final_score"
-            ),
+            "supervision_target": args.supervision,
             "test_prediction_contract": (
                 "label_free_and_frozen_before_evaluator_join"
             ),
@@ -771,6 +883,281 @@ def oracle_targets(
         ]
         targets.append(max(range(len(experts)), key=lambda index: utilities[index]))
     return np.asarray(targets, dtype=np.int64)
+
+
+def read_soft_teacher_supervision(
+    path: str | Path,
+    *,
+    task_ids: Sequence[str],
+    fold: str,
+    train_categories: set[str],
+) -> tuple[Any, Any, tuple[str, ...]]:
+    """Load only distilled distributions/weights, never raw scores, into training."""
+
+    rows = read_teacher_parquet(path)
+    staged: dict[str, dict[str, float]] = {}
+    weights: dict[str, float] = {}
+    for row in rows:
+        if str(row.get("fold")) != fold or str(row.get("category")) not in train_categories:
+            raise Stage5RouterError("teacher fold/train category scope disagrees")
+        task_id = str(row["task_id"])
+        expert = str(row["expert_name"])
+        probability = float(row["soft_utility_probability"])
+        weight = float(row["sample_weight"])
+        if not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
+            raise Stage5RouterError("teacher contains invalid soft probability")
+        if not math.isfinite(weight) or weight <= 0.0:
+            raise Stage5RouterError("teacher contains invalid sample weight")
+        if expert in staged.setdefault(task_id, {}):
+            raise Stage5RouterError("teacher duplicates a task/expert row")
+        staged[task_id][expert] = probability
+        previous = weights.setdefault(task_id, weight)
+        if not math.isclose(previous, weight, rel_tol=1e-12, abs_tol=1e-12):
+            raise Stage5RouterError("teacher weight changes across experts")
+    if set(staged) != set(task_ids):
+        raise Stage5RouterError("teacher coverage disagrees with train split")
+    expert_sets = {tuple(sorted(values)) for values in staged.values()}
+    if len(expert_sets) != 1:
+        raise Stage5RouterError("teacher expert coverage is inconsistent")
+    experts = next(iter(expert_sets))
+    np = _numpy()
+    distributions = []
+    sample_weights = []
+    for task_id in task_ids:
+        values = staged[task_id]
+        total = sum(values.values())
+        if not math.isclose(total, 1.0, rel_tol=1e-7, abs_tol=1e-7):
+            raise Stage5RouterError("teacher distribution does not sum to one")
+        distributions.append([values[expert] / total for expert in experts])
+        sample_weights.append(weights[task_id])
+    return (
+        np.asarray(distributions, dtype=np.float64),
+        np.asarray(sample_weights, dtype=np.float64),
+        experts,
+    )
+
+
+def select_capability_policy(
+    validation_probabilities: Any,
+    validation_values: Any,
+    validation_task_ids: Sequence[str],
+    manifest_by_task: Mapping[str, Mapping[str, str]],
+    outcomes: Mapping[str, TaskOutcome],
+    experts: Sequence[str],
+    feature_names: Sequence[str],
+    bank: Mapping[str, Any],
+    *,
+    capability_weight_grid: Sequence[float],
+    uncertainty_weight_grid: Sequence[float],
+    cost_weight_grid: Sequence[float],
+    capability_mode: str = "conditional",
+    enabled_skills: Sequence[str] = ("boundary", "fgbg", "lowshot", "texture"),
+) -> dict[str, Any]:
+    """Choose risk/capability/uncertainty/cost weights on validation only."""
+
+    grids = (
+        _nonnegative_grid(capability_weight_grid, "capability_weight_grid"),
+        _nonnegative_grid(uncertainty_weight_grid, "uncertainty_weight_grid"),
+        _nonnegative_grid(cost_weight_grid, "cost_weight_grid"),
+    )
+    frontier: list[dict[str, float]] = []
+    for capability_weight in grids[0]:
+        for uncertainty_weight in grids[1]:
+            for cost_weight in grids[2]:
+                objectives = capability_objectives(
+                    validation_probabilities,
+                    validation_values,
+                    validation_task_ids,
+                    manifest_by_task,
+                    experts,
+                    feature_names,
+                    bank,
+                    capability_weight=capability_weight,
+                    uncertainty_weight=uncertainty_weight,
+                    cost_weight=cost_weight,
+                    capability_mode=capability_mode,
+                    enabled_skills=enabled_skills,
+                )
+                np = _numpy()
+                indices = np.argmin(objectives, axis=1)
+                agreements = []
+                regrets = []
+                for task_id, selected_index in zip(validation_task_ids, indices):
+                    outcome = outcomes[task_id]
+                    utilities = [
+                        _oriented_utility(outcome.label, outcome.scores[expert])
+                        for expert in experts
+                    ]
+                    best = max(range(len(experts)), key=lambda index: (utilities[index], -index))
+                    agreements.append(int(selected_index) == best)
+                    regrets.append(utilities[best] - utilities[int(selected_index)])
+                frontier.append(
+                    {
+                        "capability_weight": capability_weight,
+                        "uncertainty_weight": uncertainty_weight,
+                        "cost_weight": cost_weight,
+                        "validation_selection_accuracy": sum(agreements) / len(agreements),
+                        "validation_oracle_regret": sum(regrets) / len(regrets),
+                    }
+                )
+    selected = min(
+        frontier,
+        key=lambda row: (
+            -row["validation_selection_accuracy"],
+            row["validation_oracle_regret"],
+            row["capability_weight"] + row["uncertainty_weight"] + row["cost_weight"],
+            row["capability_weight"],
+            row["uncertainty_weight"],
+            row["cost_weight"],
+        ),
+    )
+    return {
+        **selected,
+        "selection_rule": "argmin_router_risk_plus_capability_uncertainty_cost",
+        "hyperparameter_split": "validation_only",
+        "capability_mode": capability_mode,
+        "enabled_skills": list(enabled_skills),
+        "frontier": frontier,
+    }
+
+
+def capability_objectives(
+    probabilities: Any,
+    feature_values: Any,
+    task_ids: Sequence[str],
+    manifest_by_task: Mapping[str, Mapping[str, str]],
+    experts: Sequence[str],
+    feature_names: Sequence[str],
+    bank: Mapping[str, Any],
+    *,
+    capability_weight: float,
+    uncertainty_weight: float,
+    cost_weight: float,
+    capability_mode: str = "conditional",
+    enabled_skills: Sequence[str] = ("boundary", "fgbg", "lowshot", "texture"),
+) -> Any:
+    """Form the one-call conditional expert objective without evaluator inputs."""
+
+    np = _numpy()
+    probability_matrix = np.asarray(probabilities, dtype=np.float64)
+    values = np.asarray(feature_values, dtype=np.float64)
+    if probability_matrix.shape != (len(task_ids), len(experts)):
+        raise Stage5RouterError("Router probabilities have invalid shape")
+    if values.ndim != 2 or values.shape[0] != len(task_ids) or values.shape[1] != len(feature_names):
+        raise Stage5RouterError("capability feature matrix has invalid shape")
+    profiles = bank.get("profiles", {})
+    if set(profiles) != set(experts):
+        raise Stage5RouterError("capability bank expert set disagrees")
+    if capability_mode not in {"conditional", "static"}:
+        raise Stage5RouterError("capability_mode must be conditional or static")
+    enabled = set(enabled_skills)
+    if not enabled.issubset({"boundary", "fgbg", "lowshot", "texture"}):
+        raise Stage5RouterError("enabled_skills contains an unsupported capability")
+    thresholds = bank.get("difficulty_thresholds", {})
+    name_to_index = {name: index for index, name in enumerate(feature_names)}
+    boundary_names = (
+        "bir_query_bai",
+        "bir_query_support_boundary_shift",
+        "bir_absolute_boundary_shift",
+    )
+    fgbg_names = ("fbdp_fbc", "fbdp_foreground_background_confusion")
+    texture_names = (
+        "normal_niv_0002",
+        "normal_niv_2",
+        "normal_niv_structure",
+        "normal_niv_texture",
+        "normal_query_texture_complexity",
+    )
+    latency_values = [
+        float(profiles[expert].get("latency_p95") or profiles[expert].get("latency") or 0.0)
+        for expert in experts
+    ]
+    latency_scale = max(max(latency_values), 1e-12)
+    result = np.zeros_like(probability_matrix)
+    for row_index, task_id in enumerate(task_ids):
+        boundary = _mean_named_feature(values[row_index], name_to_index, boundary_names, absolute=True)
+        fgbg = _mean_named_feature(values[row_index], name_to_index, fgbg_names)
+        texture = _mean_named_feature(values[row_index], name_to_index, texture_names, absolute=True)
+        k_shot = int(manifest_by_task[task_id]["k_shot"])
+        for expert_index, expert in enumerate(experts):
+            profile = profiles[expert]
+            active_skills = [float(profile["overall_skill"])]
+            interval_names = ["overall_skill"]
+            if (
+                capability_mode == "conditional"
+                and "boundary" in enabled
+                and boundary is not None
+                and boundary >= float(thresholds["boundary"])
+            ):
+                active_skills.append(float(profile["boundary_skill"]))
+                interval_names.append("boundary_skill")
+            if (
+                capability_mode == "conditional"
+                and "fgbg" in enabled
+                and fgbg is not None
+                and fgbg >= float(thresholds["fgbg"])
+            ):
+                active_skills.append(float(profile["fgbg_skill"]))
+                interval_names.append("fgbg_skill")
+            if (
+                capability_mode == "conditional"
+                and "lowshot" in enabled
+                and k_shot == int(bank["lowshot_k"])
+            ):
+                active_skills.append(float(profile["lowshot_skill"]))
+                interval_names.append("lowshot_skill")
+            texture_threshold = thresholds.get("texture")
+            if (
+                texture is not None
+                and capability_mode == "conditional"
+                and "texture" in enabled
+                and texture_threshold is not None
+                and profile.get("texture_skill") is not None
+                and texture >= float(texture_threshold)
+            ):
+                active_skills.append(float(profile["texture_skill"]))
+                interval_names.append("texture_skill")
+            capability_risk = -math.log(max(sum(active_skills) / len(active_skills), 1e-12))
+            intervals = profile.get("confidence_intervals", {})
+            widths = [
+                max(0.0, float(intervals[name]["upper"]) - float(intervals[name]["lower"]))
+                for name in interval_names if name in intervals
+            ]
+            uncertainty = sum(widths) / len(widths) if widths else 0.0
+            latency = latency_values[expert_index] / latency_scale
+            reliability_cost = latency + float(profile["failure_rate"])
+            result[row_index, expert_index] = (
+                -math.log(max(probability_matrix[row_index, expert_index], 1e-12))
+                + capability_weight * capability_risk
+                + uncertainty_weight * uncertainty
+                + cost_weight * reliability_cost
+            )
+    return result
+
+
+def _mean_named_feature(
+    row: Any,
+    name_to_index: Mapping[str, int],
+    candidates: Sequence[str],
+    *,
+    absolute: bool = False,
+) -> float | None:
+    values = [float(row[name_to_index[name]]) for name in candidates if name in name_to_index]
+    if not values:
+        return None
+    if absolute:
+        values = [abs(value) for value in values]
+    return sum(values) / len(values)
+
+
+def _nonnegative_grid(values: Sequence[float], name: str) -> tuple[float, ...]:
+    try:
+        result = tuple(float(value) for value in values)
+    except (TypeError, ValueError) as exc:
+        raise Stage5RouterError(f"{name} must be numeric") from exc
+    if not result or any(not math.isfinite(value) or value < 0.0 for value in result) or tuple(sorted(set(result))) != result:
+        raise Stage5RouterError(f"{name} must be sorted, unique, finite, and non-negative")
+    return result
 
 
 def select_global_best_expert(

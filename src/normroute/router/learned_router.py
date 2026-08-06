@@ -156,15 +156,28 @@ def fit_linear_router(
     learning_rate: float = 0.05,
     seed: int = 0,
     device: str = "cpu",
+    train_sample_weights: Any | None = None,
+    validation_sample_weights: Any | None = None,
 ) -> LinearRouterFit:
-    """Fit candidates on train and select l2 using validation metrics only."""
+    """Fit hard/soft targets and select l2 using validation metrics only."""
 
     np = _numpy()
     train_x = _matrix(train_values, "training values", np)
     validation_x = _matrix(validation_values, "validation values", np)
-    train_y = _targets(train_targets, train_x.shape[0], len(experts), np)
-    validation_y = _targets(
+    train_y = _target_distributions(
+        train_targets, train_x.shape[0], len(experts), np
+    )
+    validation_y = _target_distributions(
         validation_targets, validation_x.shape[0], len(experts), np
+    )
+    train_weights = _sample_weights(
+        train_sample_weights, train_x.shape[0], "training sample weights", np
+    )
+    validation_weights = _sample_weights(
+        validation_sample_weights,
+        validation_x.shape[0],
+        "validation sample weights",
+        np,
     )
     names = tuple(str(item) for item in feature_names)
     expert_names = tuple(str(item) for item in experts)
@@ -184,8 +197,16 @@ def fit_linear_router(
         raise Stage5RouterError("learning_rate must be positive and finite")
     candidates = _l2_grid(l2_grid)
 
-    location = np.mean(train_x, axis=0, dtype=np.float64)
-    scale = np.std(train_x, axis=0, dtype=np.float64)
+    normalized_train_weights = train_weights / np.sum(train_weights)
+    location = np.sum(
+        train_x * normalized_train_weights[:, None], axis=0, dtype=np.float64
+    )
+    variance = np.sum(
+        ((train_x - location) ** 2) * normalized_train_weights[:, None],
+        axis=0,
+        dtype=np.float64,
+    )
+    scale = np.sqrt(variance)
     scale = np.where(scale > 1e-8, scale, 1.0)
     train_z = np.asarray((train_x - location) / scale, dtype=np.float32)
     validation_z = np.asarray(
@@ -205,6 +226,7 @@ def fit_linear_router(
                 train_z,
                 train_y,
                 class_weights,
+                train_weights,
                 classes=len(expert_names),
                 l2=l2,
                 epochs=epochs,
@@ -219,6 +241,7 @@ def fit_linear_router(
                 train_z,
                 train_y,
                 class_weights,
+                train_weights,
                 classes=len(expert_names),
                 l2=l2,
                 epochs=epochs,
@@ -231,16 +254,18 @@ def fit_linear_router(
         logits = validation_z @ weights + bias
         probabilities = _softmax(logits, np)
         predicted = np.argmax(probabilities, axis=1)
-        accuracy = float(np.mean(predicted == validation_y))
+        validation_hard = np.argmax(validation_y, axis=1)
+        accuracy = float(
+            np.sum(validation_weights * (predicted == validation_hard))
+            / np.sum(validation_weights)
+        )
         cross_entropy = float(
-            -np.mean(
-                np.log(
-                    np.maximum(
-                        probabilities[np.arange(validation_y.size), validation_y],
-                        1e-12,
-                    )
-                )
+            -np.sum(
+                validation_weights[:, None]
+                * validation_y
+                * np.log(np.maximum(probabilities, 1e-12))
             )
+            / np.sum(validation_weights)
         )
         fitted.append(
             (accuracy, cross_entropy, l2, weights, bias, backend)
@@ -278,6 +303,7 @@ def _fit_numpy(
     values: Any,
     targets: Any,
     class_weights: Any,
+    base_sample_weights: Any,
     *,
     classes: int,
     l2: float,
@@ -296,14 +322,13 @@ def _fit_numpy(
             indices = order[start : start + batch_size]
             batch_x = values[indices]
             batch_y = targets[indices]
-            sample_weights = class_weights[batch_y]
+            sample_weights = base_sample_weights[indices] * (batch_y @ class_weights)
             denominator = float(np.sum(sample_weights))
             logits = batch_x @ weights + bias
             probabilities = _softmax(logits, np)
-            probabilities[np.arange(batch_y.size), batch_y] -= 1.0
-            probabilities *= (sample_weights / denominator)[:, None]
-            grad_weights = batch_x.T @ probabilities + l2 * weights
-            grad_bias = np.sum(probabilities, axis=0)
+            residual = (probabilities - batch_y) * (sample_weights / denominator)[:, None]
+            grad_weights = batch_x.T @ residual + l2 * weights
+            grad_bias = np.sum(residual, axis=0)
             weights -= learning_rate * grad_weights
             bias -= learning_rate * grad_bias
     return (
@@ -316,6 +341,7 @@ def _fit_torch(
     values: Any,
     targets: Any,
     class_weights: Any,
+    base_sample_weights: Any,
     *,
     classes: int,
     l2: float,
@@ -341,7 +367,10 @@ def _fit_torch(
     torch.use_deterministic_algorithms(True, warn_only=True)
     target_device = torch.device(device)
     x = torch.as_tensor(values, dtype=torch.float32, device=target_device)
-    y = torch.as_tensor(targets, dtype=torch.long, device=target_device)
+    y = torch.as_tensor(targets, dtype=torch.float32, device=target_device)
+    base_weights = torch.as_tensor(
+        base_sample_weights, dtype=torch.float32, device=target_device
+    )
     weights = torch.zeros(
         (values.shape[1], classes),
         dtype=torch.float32,
@@ -367,11 +396,15 @@ def _fit_torch(
         for start in range(0, values.shape[0], batch_size):
             indices = order[start : start + batch_size].to(target_device)
             logits = x.index_select(0, indices) @ weights + bias
-            loss = torch.nn.functional.cross_entropy(
-                logits,
-                y.index_select(0, indices),
-                weight=loss_weights,
+            batch_targets = y.index_select(0, indices)
+            sample_weights = base_weights.index_select(0, indices) * (
+                batch_targets @ loss_weights
             )
+            per_sample = -torch.sum(
+                batch_targets * torch.nn.functional.log_softmax(logits, dim=1),
+                dim=1,
+            )
+            loss = torch.sum(sample_weights * per_sample) / torch.sum(sample_weights)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
@@ -394,23 +427,56 @@ def _matrix(value: Any, name: str, np: Any) -> Any:
     return matrix
 
 
-def _targets(value: Any, rows: int, classes: int, np: Any) -> Any:
+def _target_distributions(value: Any, rows: int, classes: int, np: Any) -> Any:
     targets = np.asarray(value)
-    if targets.ndim != 1 or targets.shape[0] != rows:
-        raise Stage5RouterError("Router targets must have shape [N]")
-    if not bool(np.all(np.equal(targets, np.floor(targets)))):
-        raise Stage5RouterError("Router targets must be integer class indices")
-    targets = targets.astype(np.int64, copy=False)
-    if bool(np.any(targets < 0)) or bool(np.any(targets >= classes)):
-        raise Stage5RouterError("Router target class index is out of range")
-    return targets
+    if targets.ndim == 1:
+        if targets.shape[0] != rows or not bool(
+            np.all(np.equal(targets, np.floor(targets)))
+        ):
+            raise Stage5RouterError(
+                "hard Router targets must be integer class indices with shape [N]"
+            )
+        indices = targets.astype(np.int64, copy=False)
+        if bool(np.any(indices < 0)) or bool(np.any(indices >= classes)):
+            raise Stage5RouterError("Router target class index is out of range")
+        distributions = np.zeros((rows, classes), dtype=np.float64)
+        distributions[np.arange(rows), indices] = 1.0
+        return distributions
+    try:
+        distributions = np.asarray(value, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        raise Stage5RouterError("soft Router targets must be numeric") from exc
+    if distributions.shape != (rows, classes):
+        raise Stage5RouterError("soft Router targets must have shape [N,E]")
+    if not bool(np.all(np.isfinite(distributions))) or bool(
+        np.any(distributions < 0.0)
+    ):
+        raise Stage5RouterError("soft Router targets must be finite and non-negative")
+    totals = np.sum(distributions, axis=1)
+    if not bool(np.all(np.isclose(totals, 1.0, rtol=1e-7, atol=1e-7))):
+        raise Stage5RouterError("each soft Router target must sum to one")
+    return distributions / totals[:, None]
 
 
 def _balanced_class_weights(targets: Any, classes: int, np: Any) -> Any:
-    counts = np.bincount(targets, minlength=classes).astype(np.float64)
+    counts = np.sum(targets, axis=0, dtype=np.float64)
     weights = np.zeros(classes, dtype=np.float64)
     present = counts > 0
-    weights[present] = targets.size / (float(classes) * counts[present])
+    weights[present] = targets.shape[0] / (float(classes) * counts[present])
+    return weights
+
+
+def _sample_weights(value: Any | None, rows: int, name: str, np: Any) -> Any:
+    if value is None:
+        return np.ones(rows, dtype=np.float64)
+    try:
+        weights = np.asarray(value, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        raise Stage5RouterError(f"{name} must be numeric") from exc
+    if weights.shape != (rows,) or not bool(np.all(np.isfinite(weights))) or bool(
+        np.any(weights <= 0.0)
+    ):
+        raise Stage5RouterError(f"{name} must have shape [N] and be finite/positive")
     return weights
 
 
