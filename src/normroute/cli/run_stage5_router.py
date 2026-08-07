@@ -1479,3 +1479,7 @@ __all__ = [
     "read_router_features",
     "select_global_best_expert",
 ]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from src.normroute.cli.summarize_stage5_router import (
+    _comparison_setting_names,
     _expected_feature_view,
     aggregate_records,
     exact_sign_flip_pvalue,
@@ -28,6 +29,31 @@ def test_summary_maps_variant_names_to_strict_feature_views(
     variant: str, expected: str
 ) -> None:
     assert _expected_feature_view(variant) == expected
+
+
+@pytest.mark.parametrize(
+    "variant",
+    (
+        "hard_oracle",
+        "soft_teacher_no_bank",
+        "soft_teacher_static",
+        "soft_teacher_full",
+        "soft_no_boundary",
+    ),
+)
+def test_teacher_ecpb_summary_uses_shared_combined_feature_view(variant: str) -> None:
+    assert _expected_feature_view(
+        variant, experiment_family="teacher_ecpb"
+    ) == "normal_bir_fbdp"
+
+
+def test_teacher_ecpb_summary_allows_only_intentional_supervision_difference() -> None:
+    strict = _comparison_setting_names("strict_feature_ablation")
+    teacher_ecpb = _comparison_setting_names("teacher_ecpb")
+
+    assert "supervision_target" in strict
+    assert "supervision_target" not in teacher_ecpb
+    assert set(strict) - {"supervision_target"} == set(teacher_ecpb)
 
 
 def _record(

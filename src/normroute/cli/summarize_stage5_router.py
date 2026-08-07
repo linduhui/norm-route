@@ -29,6 +29,7 @@ from .run_stage5_router import (
 
 
 STAGE5_ROUTER_SUMMARY_PROTOCOL_VERSION = "stage5.router_summary.v1"
+EXPERIMENT_FAMILIES = ("strict_feature_ablation", "teacher_ecpb")
 DEFAULT_FOLDS = tuple(f"fold{index}" for index in range(5))
 DEFAULT_VARIANTS = (
     "normal_only",
@@ -93,6 +94,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--folds", nargs="+", default=DEFAULT_FOLDS)
     parser.add_argument("--variants", nargs="+", default=DEFAULT_VARIANTS)
     parser.add_argument(
+        "--experiment-family",
+        choices=EXPERIMENT_FAMILIES,
+        default="strict_feature_ablation",
+        help=(
+            "Validation contract for the requested comparison. teacher_ecpb "
+            "expects normal_bir_fbdp features and permits the intentional "
+            "hard-oracle versus soft-teacher supervision contrast."
+        ),
+    )
+    parser.add_argument(
         "--paired-comparison",
         nargs=3,
         action="append",
@@ -125,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
             args.input_root,
             folds=tuple(args.folds),
             variants=tuple(args.variants),
+            experiment_family=args.experiment_family,
         )
         summary = aggregate_records(records)
         paired = paired_ablation_deltas(
@@ -189,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
                 else [list(item) for item in PAIRED_COMPARISONS]
             ),
             "reference_variant": args.reference_variant,
+            "experiment_family": args.experiment_family,
         },
         "input_hashes": input_hashes,
         "seed": None,
@@ -220,12 +233,17 @@ def load_cv_records(
     *,
     folds: Sequence[str],
     variants: Sequence[str],
+    experiment_family: str = "strict_feature_ablation",
 ) -> tuple[list[dict[str, Any]], dict[str, str], list[str]]:
     root = Path(input_root)
     if not folds or len(set(folds)) != len(folds):
         raise Stage5RouterSummaryError("folds must be non-empty and unique")
     if not variants or len(set(variants)) != len(variants):
         raise Stage5RouterSummaryError("variants must be non-empty and unique")
+    if experiment_family not in EXPERIMENT_FAMILIES:
+        raise Stage5RouterSummaryError(
+            f"unsupported experiment_family={experiment_family!r}"
+        )
     records: list[dict[str, Any]] = []
     hashes: dict[str, str] = {}
     predictions: list[str] = []
@@ -266,7 +284,9 @@ def load_cv_records(
                 raise Stage5RouterSummaryError(
                     f"Router run config provenance mismatch: {run_path}"
                 )
-            expected_view = _expected_feature_view(variant)
+            expected_view = _expected_feature_view(
+                variant, experiment_family=experiment_family
+            )
             observed_view = config.get("feature_view")
             if observed_view != expected_view:
                 raise Stage5RouterSummaryError(
@@ -274,18 +294,15 @@ def load_cv_records(
                     f"expected={expected_view!r}, observed={observed_view!r}, "
                     f"run={run_path}"
                 )
-            for name in (
-                "epochs",
-                "batch_size",
-                "learning_rate",
-                "l2_grid",
-                "seed",
-                "device",
-                "model_kind",
-                "standardization",
-                "supervision_target",
-                "test_prediction_contract",
-            ):
+            supervision = config.get("supervision_target")
+            if experiment_family == "teacher_ecpb" and supervision not in {
+                "hard_oracle",
+                "soft_teacher",
+            }:
+                raise Stage5RouterSummaryError(
+                    f"teacher_ecpb run has invalid supervision_target: {run_path}"
+                )
+            for name in _comparison_setting_names(experiment_family):
                 value = json.dumps(
                     config.get(name),
                     sort_keys=True,
@@ -371,8 +388,37 @@ def load_cv_records(
     return records, hashes, predictions
 
 
-def _expected_feature_view(variant: str) -> str:
+def _comparison_setting_names(experiment_family: str) -> tuple[str, ...]:
+    names = (
+        "epochs",
+        "batch_size",
+        "learning_rate",
+        "l2_grid",
+        "seed",
+        "device",
+        "model_kind",
+        "standardization",
+        "supervision_target",
+        "test_prediction_contract",
+    )
+    if experiment_family == "teacher_ecpb":
+        return tuple(name for name in names if name != "supervision_target")
+    return names
+
+
+def _expected_feature_view(
+    variant: str,
+    *,
+    experiment_family: str = "strict_feature_ablation",
+) -> str:
     """Map an experiment variant to its strict Router feature projection."""
+
+    if experiment_family == "teacher_ecpb":
+        return "normal_bir_fbdp"
+    if experiment_family != "strict_feature_ablation":
+        raise Stage5RouterSummaryError(
+            f"unsupported experiment_family={experiment_family!r}"
+        )
 
     if variant == "normal_only":
         return "normal_only"
@@ -791,3 +837,7 @@ __all__ = [
     "parse_args",
     "render_paper_tables",
 ]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
