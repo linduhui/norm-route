@@ -141,6 +141,11 @@ class TeacherArtifact:
     protocol_version: str = TEACHER_PROTOCOL_VERSION
 
     def metadata(self) -> dict[str, Any]:
+        runtime_values = [
+            float(row["runtime_ms"])
+            for row in self.rows
+            if row.get("runtime_ms") is not None
+        ]
         return {
             "protocol_version": self.protocol_version,
             "evaluator_only": True,
@@ -156,6 +161,15 @@ class TeacherArtifact:
             "proper_loss": self.proper_loss,
             "cost_weight": self.cost_weight,
             "failure_penalty": self.failure_penalty,
+            "runtime": {
+                "source": "evaluator_only_routing_matrix.runtime_ms",
+                "scope": "train_categories_only",
+                "row_count": len(self.rows),
+                "non_null_count": len(runtime_values),
+                "coverage": len(runtime_values) / len(self.rows) if self.rows else 0.0,
+                "minimum_ms": min(runtime_values) if runtime_values else None,
+                "maximum_ms": max(runtime_values) if runtime_values else None,
+            },
             "calibrations": [item.to_dict() for item in self.calibrations],
         }
 
@@ -562,11 +576,14 @@ def _read_allowed_outcomes(
                     f"{source}:{line_number} successful output has no expert score"
                 )
             score = _finite_float(clean[score_column], source, line_number, score_column)
-        runtime = None
-        if clean.get("runtime_ms"):
-            runtime = _finite_float(clean["runtime_ms"], source, line_number, "runtime_ms")
-            if runtime < 0.0:
-                raise TeacherInputError(f"{source}:{line_number} has negative runtime_ms")
+        if not clean.get("runtime_ms"):
+            raise TeacherInputError(
+                f"{source}:{line_number} is missing runtime_ms; rebuild the "
+                "evaluator-only Stage 3 routing_matrix_long.csv from Stage 2 predictions"
+            )
+        runtime = _finite_float(clean["runtime_ms"], source, line_number, "runtime_ms")
+        if runtime < 0.0:
+            raise TeacherInputError(f"{source}:{line_number} has negative runtime_ms")
         expert = clean[expert_column].casefold()
         current = staged.setdefault(
             task_id,

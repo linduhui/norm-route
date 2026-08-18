@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from pathlib import Path
 import sys
 from typing import Any
@@ -149,13 +150,30 @@ def validate_long_matrix_expert_alignment(path: Path) -> list[str]:
         with path.open("r", newline="", encoding="utf-8-sig") as handle:
             reader = csv.DictReader(handle)
             fieldnames = reader.fieldnames or []
-            missing = [column for column in ("image_id", "expert_name") if column not in fieldnames]
+            missing = [
+                column
+                for column in ("image_id", "expert_name", "runtime_ms")
+                if column not in fieldnames
+            ]
             if missing:
                 return [f"{path} is missing columns needed for expert alignment: {missing}"]
             sample_ids_by_expert: dict[str, set[str]] = {expert: set() for expert in EXPECTED_EXPERTS}
-            for row in reader:
+            for line_number, row in enumerate(reader, start=2):
                 expert = normalize_expert_name(row.get("expert_name", ""))
                 sample_id = (row.get("sample_id") or row.get("image_id") or "").strip()
+                raw_runtime = (row.get("runtime_ms") or "").strip()
+                try:
+                    runtime_ms = float(raw_runtime)
+                except ValueError:
+                    errors.append(
+                        f"{path}:{line_number} has invalid runtime_ms: {raw_runtime!r}"
+                    )
+                    continue
+                if not math.isfinite(runtime_ms) or runtime_ms < 0.0:
+                    errors.append(
+                        f"{path}:{line_number} has invalid runtime_ms: {raw_runtime!r}"
+                    )
+                    continue
                 if expert in sample_ids_by_expert:
                     sample_ids_by_expert[expert].add(sample_id)
     except Exception as exc:

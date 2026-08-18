@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
+import csv
 from dataclasses import dataclass
 import json
 import math
@@ -16,7 +17,10 @@ from typing import Any
 from .teacher import TEACHER_PROTOCOL_VERSION, TeacherArtifact
 
 
-EXPERT_BANK_PROTOCOL_VERSION = "stage5.expert_capability_bank.v2"
+EXPERT_BANK_PROTOCOL_VERSION = "stage5.expert_capability_bank.v3"
+EXPERT_BANK_COMPATIBLE_PROTOCOL_VERSIONS = frozenset(
+    {"stage5.expert_capability_bank.v2", EXPERT_BANK_PROTOCOL_VERSION}
+)
 CAPABILITY_BANK_NAME = "capability_bank.json"
 CAPABILITY_FEATURE_NAMES = (
     "overall_skill",
@@ -44,6 +48,18 @@ _TEXTURE_FEATURES = (
     "normal_niv_texture",
     "normal_query_texture_complexity",
 )
+_STAGE2_RUNTIME_COLUMNS = (
+    "expert",
+    "dataset",
+    "category",
+    "k_shot",
+    "seed",
+    "support_set_id",
+    "num_predictions",
+    "num_success",
+    "num_failed",
+    "average_runtime_ms",
+)
 
 
 class ExpertBankError(RuntimeError):
@@ -56,6 +72,33 @@ class ExpertBankInputError(ExpertBankError, ValueError):
 
 class ExpertBankIsolationError(ExpertBankError, ValueError):
     """Raised when non-training outcomes enter capability aggregation."""
+
+
+@dataclass(frozen=True)
+class Stage2RuntimeSummaryRecord:
+    """One aggregate runtime row, parsed only after the category gate."""
+
+    expert: str
+    dataset: str
+    category: str
+    k_shot: int
+    seed: int
+    support_set_id: str
+    num_predictions: int
+    num_success: int
+    num_failed: int
+    average_runtime_ms: float
+
+    @property
+    def key(self) -> tuple[str, str, str, str, int, int]:
+        return (
+            self.expert,
+            self.dataset,
+            self.category,
+            self.support_set_id,
+            self.k_shot,
+            self.seed,
+        )
 
 
 @dataclass(frozen=True)
@@ -166,6 +209,7 @@ class ExpertCapabilityBank:
     profiles: Mapping[str, ExpertCapabilityProfile]
     bootstrap_replicates: int
     bootstrap_seed: int
+    runtime_provenance: Mapping[str, Any]
     protocol_version: str = EXPERT_BANK_PROTOCOL_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -187,6 +231,7 @@ class ExpertCapabilityBank:
                 "seed": self.bootstrap_seed,
                 "confidence": 0.95,
             },
+            "runtime_provenance": dict(self.runtime_provenance),
             "capability_feature_names": list(CAPABILITY_FEATURE_NAMES),
             "profiles": {
                 expert: self.profiles[expert].to_dict()
@@ -204,6 +249,7 @@ def build_expert_capability_bank(
     boundary_signals: Mapping[str, float] | None = None,
     fgbg_signals: Mapping[str, float] | None = None,
     texture_signals: Mapping[str, float] | None = None,
+    runtime_summary_records: Sequence[Stage2RuntimeSummaryRecord] | None = None,
     bootstrap_replicates: int = 200,
     bootstrap_seed: int = 0,
 ) -> ExpertCapabilityBank:
@@ -213,6 +259,11 @@ def build_expert_capability_bank(
         teacher, fold=fold, train_categories=train_categories
     )
     selected = _validate_and_select_rows(rows, resolved_fold, categories)
+    runtime_provenance = _validate_runtime_provenance(
+        selected,
+        categories=categories,
+        runtime_summary_records=runtime_summary_records,
+    )
     task_ids = tuple(sorted({str(row["task_id"]) for row in selected}))
     extracted_boundary: dict[str, float] = {}
     extracted_fgbg: dict[str, float] = {}
@@ -272,6 +323,10 @@ def build_expert_capability_bank(
         ]
         latency_p50 = _weighted_runtime_quantile(successful_runtime_rows, 0.5)
         latency_p95 = _weighted_runtime_quantile(successful_runtime_rows, 0.95)
+        if latency_p50 is None or latency_p95 is None:
+            raise ExpertBankInputError(
+                f"expert {expert!r} has no successful train runtime observations"
+            )
         overall = _weighted_skill(expert_rows)
         boundary_skill = _weighted_skill(boundary_rows)
         fgbg_skill = _weighted_skill(fgbg_rows)
@@ -343,6 +398,7 @@ def build_expert_capability_bank(
         profiles=profiles,
         bootstrap_replicates=replicates,
         bootstrap_seed=seed,
+        runtime_provenance=runtime_provenance,
     )
 
 
@@ -415,6 +471,87 @@ def iter_feature_records_jsonl(path: str | Path) -> Iterable[Mapping[str, Any]]:
             yield value
 
 
+def read_stage2_runtime_summary(
+    path: str | Path,
+    *,
+    allowed_categories: set[str],
+) -> tuple[Stage2RuntimeSummaryRecord, ...]:
+    """Read train-category runtime aggregates without parsing held-out rows.
+
+    The category check deliberately precedes expert, count, and runtime parsing,
+    so malformed validation/test values cannot affect an ECPB artifact.
+    """
+
+    source = Path(path)
+    if not source.is_file() or source.suffix.casefold() != ".csv":
+        raise ExpertBankInputError(
+            f"Stage 2 runtime summary must be an existing CSV: {source}"
+        )
+    if not allowed_categories:
+        raise ExpertBankIsolationError(
+            "runtime summary requires non-empty train categories"
+        )
+    records: dict[
+        tuple[str, str, str, str, int, int], Stage2RuntimeSummaryRecord
+    ] = {}
+    with source.open("r", newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = reader.fieldnames or []
+        missing_columns = [
+            name for name in _STAGE2_RUNTIME_COLUMNS if name not in fieldnames
+        ]
+        if missing_columns:
+            raise ExpertBankInputError(
+                f"{source} is missing Stage 2 runtime columns: {missing_columns}"
+            )
+        for line_number, raw in enumerate(reader, start=2):
+            category = str(raw.get("category") or "").strip()
+            if category not in allowed_categories:
+                continue
+            clean = {
+                str(key): str(value if value is not None else "").strip()
+                for key, value in raw.items()
+            }
+            missing_values = [
+                name for name in _STAGE2_RUNTIME_COLUMNS if not clean.get(name)
+            ]
+            if missing_values:
+                raise ExpertBankInputError(
+                    f"{source}:{line_number} is missing runtime values: {missing_values}"
+                )
+            record = Stage2RuntimeSummaryRecord(
+                expert=_text(clean["expert"], "expert").casefold(),
+                dataset=_text(clean["dataset"], "dataset"),
+                category=category,
+                k_shot=_positive_int(clean["k_shot"], "k_shot"),
+                seed=_nonnegative_int(clean["seed"], "seed"),
+                support_set_id=_text(clean["support_set_id"], "support_set_id"),
+                num_predictions=_positive_int(
+                    clean["num_predictions"], "num_predictions"
+                ),
+                num_success=_nonnegative_int(clean["num_success"], "num_success"),
+                num_failed=_nonnegative_int(clean["num_failed"], "num_failed"),
+                average_runtime_ms=_nonnegative(
+                    clean["average_runtime_ms"], "average_runtime_ms"
+                ),
+            )
+            if record.num_success + record.num_failed != record.num_predictions:
+                raise ExpertBankInputError(
+                    f"{source}:{line_number} has inconsistent success/failure counts"
+                )
+            if record.key in records:
+                raise ExpertBankInputError(
+                    f"{source}:{line_number} duplicates runtime condition {record.key}"
+                )
+            records[record.key] = record
+    observed_categories = {record.category for record in records.values()}
+    if observed_categories != allowed_categories:
+        raise ExpertBankIsolationError(
+            "Stage 2 runtime summary does not exactly cover current-fold train categories"
+        )
+    return tuple(records[key] for key in sorted(records))
+
+
 def write_capability_bank(bank: ExpertCapabilityBank, output_path: str | Path) -> Path:
     path = Path(output_path)
     if path.suffix.casefold() != ".json" or path.name != CAPABILITY_BANK_NAME:
@@ -442,7 +579,10 @@ def read_capability_bank(path: str | Path) -> dict[str, Any]:
         value = json.loads(source.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ExpertBankInputError(f"could not read capability bank {source}") from exc
-    if not isinstance(value, dict) or value.get("protocol_version") != EXPERT_BANK_PROTOCOL_VERSION:
+    if (
+        not isinstance(value, dict)
+        or value.get("protocol_version") not in EXPERT_BANK_COMPATIBLE_PROTOCOL_VERSIONS
+    ):
         raise ExpertBankInputError("capability bank protocol is incompatible")
     if not value.get("train_categories") or not isinstance(value.get("profiles"), dict):
         raise ExpertBankInputError("capability bank is incomplete")
@@ -480,7 +620,104 @@ def _validate_and_select_rows(
             raise ExpertBankIsolationError("capability source must be evaluator-only")
         if str(row.get("fold", "")) != fold or row.get("split") != "train":
             raise ExpertBankIsolationError("capability statistics may use only current-fold train rows")
+        if row.get("runtime_ms") is None:
+            raise ExpertBankInputError(
+                "capability latency requires runtime_ms on every train teacher row"
+            )
+        _nonnegative(row.get("runtime_ms"), "runtime_ms")
     return selected
+
+
+def _runtime_key(row: Mapping[str, Any]) -> tuple[str, str, str, str, int, int]:
+    return (
+        _text(row.get("expert_name"), "expert_name").casefold(),
+        _text(row.get("dataset"), "dataset"),
+        _text(row.get("category"), "category"),
+        _text(row.get("support_set_id"), "support_set_id"),
+        _positive_int(row.get("k_shot"), "k_shot"),
+        _nonnegative_int(row.get("seed"), "seed"),
+    )
+
+
+def _validate_runtime_provenance(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    categories: Sequence[str],
+    runtime_summary_records: Sequence[Stage2RuntimeSummaryRecord] | None,
+) -> dict[str, Any]:
+    groups: dict[
+        tuple[str, str, str, str, int, int], list[Mapping[str, Any]]
+    ] = {}
+    for row in rows:
+        groups.setdefault(_runtime_key(row), []).append(row)
+    base = {
+        "source": "evaluator_only_routing_matrix.runtime_ms",
+        "category_scope": "train_only",
+        "train_categories": list(sorted(categories)),
+        "teacher_runtime_row_count": len(rows),
+        "teacher_runtime_coverage": 1.0,
+        "latency_statistics": "category_and_query_balanced_weighted_p50_p95",
+    }
+    if runtime_summary_records is None:
+        return {**base, "stage2_summary_cross_check": False}
+    summary = {record.key: record for record in runtime_summary_records}
+    if len(summary) != len(runtime_summary_records):
+        raise ExpertBankInputError(
+            "Stage 2 runtime summary contains duplicate conditions"
+        )
+    if set(summary) != set(groups):
+        missing = sorted(set(groups) - set(summary))
+        extra = sorted(set(summary) - set(groups))
+        raise ExpertBankInputError(
+            "Stage 2 runtime summary condition coverage disagrees with train teacher rows; "
+            f"missing={missing[:5]}, extra={extra[:5]}"
+        )
+    total_predictions = 0
+    total_failed = 0
+    for key, condition_rows in groups.items():
+        record = summary[key]
+        failed = sum(bool(row.get("failed")) for row in condition_rows)
+        mean_runtime = sum(
+            float(row["runtime_ms"]) for row in condition_rows
+        ) / len(condition_rows)
+        if record.num_predictions != len(condition_rows):
+            raise ExpertBankInputError(
+                f"Stage 2 runtime count disagrees for condition {key}"
+            )
+        if (
+            record.num_failed != failed
+            or record.num_success != len(condition_rows) - failed
+        ):
+            raise ExpertBankInputError(
+                f"Stage 2 failure counts disagree for condition {key}"
+            )
+        if not math.isclose(
+            record.average_runtime_ms,
+            mean_runtime,
+            rel_tol=1e-9,
+            abs_tol=1e-6,
+        ):
+            raise ExpertBankInputError(
+                f"Stage 2 average_runtime_ms disagrees for condition {key}: "
+                f"summary={record.average_runtime_ms}, teacher={mean_runtime}"
+            )
+        total_predictions += record.num_predictions
+        total_failed += record.num_failed
+    return {
+        **base,
+        "stage2_summary_cross_check": True,
+        "stage2_summary_record_count": len(runtime_summary_records),
+        "stage2_summary_prediction_count": total_predictions,
+        "stage2_summary_failure_count": total_failed,
+        "condition_fields": [
+            "expert",
+            "dataset",
+            "category",
+            "support_set_id",
+            "k_shot",
+            "seed",
+        ],
+    }
 
 
 def _one_row_per_task(rows: Sequence[Mapping[str, Any]]) -> dict[str, Mapping[str, Any]]:
@@ -588,6 +825,16 @@ def _bootstrap_intervals(
         slices["texture_skill"] = list(texture_rows)
     estimates = {name: _weighted_skill(subset) for name, subset in slices.items()}
     estimates["failure_rate"] = _weighted_failure_rate(rows)
+    successful_runtime_rows = [
+        row
+        for row in rows
+        if not bool(row.get("failed")) and row.get("runtime_ms") is not None
+    ]
+    latency_p50 = _weighted_runtime_quantile(successful_runtime_rows, 0.5)
+    latency_p95 = _weighted_runtime_quantile(successful_runtime_rows, 0.95)
+    if latency_p50 is not None and latency_p95 is not None:
+        estimates["latency_p50"] = latency_p50
+        estimates["latency_p95"] = latency_p95
     if replicates == 0:
         return {
             name: ConfidenceInterval(value, value, value)
@@ -610,6 +857,17 @@ def _bootstrap_intervals(
             for _ in range(multiplicity.get(str(row["category"]), 0))
         ]
         samples["failure_rate"].append(_weighted_failure_rate(expanded_all))
+        expanded_runtime = [
+            row
+            for row in expanded_all
+            if not bool(row.get("failed")) and row.get("runtime_ms") is not None
+        ]
+        for name, quantile in (("latency_p50", 0.5), ("latency_p95", 0.95)):
+            if name in samples:
+                value = _weighted_runtime_quantile(expanded_runtime, quantile)
+                samples[name].append(
+                    estimates[name] if value is None else value
+                )
     return {
         name: ConfidenceInterval(
             estimate=value,
@@ -677,9 +935,17 @@ def _positive_int(value: Any, field: str) -> int:
 
 
 def _nonnegative_int(value: Any, field: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+    if isinstance(value, bool):
         raise ExpertBankInputError(f"{field} must be a non-negative integer")
-    return value
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ExpertBankInputError(
+            f"{field} must be a non-negative integer"
+        ) from exc
+    if parsed < 0 or (isinstance(value, float) and not value.is_integer()):
+        raise ExpertBankInputError(f"{field} must be a non-negative integer")
+    return parsed
 
 
 def _finite(value: Any, field: str) -> float:
@@ -717,6 +983,7 @@ __all__ = [
     "CAPABILITY_BANK_NAME",
     "CAPABILITY_FEATURE_NAMES",
     "EXPERT_BANK_PROTOCOL_VERSION",
+    "EXPERT_BANK_COMPATIBLE_PROTOCOL_VERSIONS",
     "ConfidenceInterval",
     "ExpertBankError",
     "ExpertBankInputError",
@@ -724,11 +991,13 @@ __all__ = [
     "ExpertCapabilityBank",
     "ExpertCapabilityProfile",
     "SkillCurveBin",
+    "Stage2RuntimeSummaryRecord",
     "build_capability_bank",
     "build_expert_capability_bank",
     "extract_capability_signals",
     "extract_difficulty_signals",
     "iter_feature_records_jsonl",
     "read_capability_bank",
+    "read_stage2_runtime_summary",
     "write_capability_bank",
 ]

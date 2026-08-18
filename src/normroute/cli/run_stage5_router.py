@@ -429,6 +429,7 @@ def main(argv: list[str] | None = None) -> int:
             "test_evaluation_scope": (
                 "evaluator_only_after_label_free_predictions"
             ),
+            "runtime_source": "evaluator_only_routing_matrix.runtime_ms",
             "source_ablation": artifact.source_ablation,
             "source_fbdp_ablation": artifact.source_fbdp_ablation,
             "source_feature_view": artifact.source_feature_view,
@@ -474,6 +475,8 @@ def main(argv: list[str] | None = None) -> int:
             "source_bir_ablation": artifact.source_ablation,
             "source_fbdp_ablation": artifact.source_fbdp_ablation,
             "source_feature_protocol": artifact.source_protocol_version,
+            "runtime_source": "evaluator_only_routing_matrix.runtime_ms",
+            "runtime_complete": True,
         }
     except Exception as exc:
         failures.append(
@@ -802,6 +805,7 @@ def read_evaluator_outcomes(
             "seed",
             expert_column,
             score_column,
+            "runtime_ms",
             "label",
         )
         missing = [name for name in required if name not in fieldnames]
@@ -826,12 +830,13 @@ def read_evaluator_outcomes(
             score = _finite_float(
                 clean[score_column], source, line_number, score_column
             )
-            runtime = (
-                _nonnegative_float(
-                    clean["runtime_ms"], source, line_number, "runtime_ms"
+            if not clean.get("runtime_ms"):
+                raise Stage5RouterError(
+                    f"{source}:{line_number} is missing runtime_ms; rebuild the "
+                    "evaluator-only Stage 3 routing matrix"
                 )
-                if "runtime_ms" in fieldnames and clean.get("runtime_ms")
-                else None
+            runtime = _nonnegative_float(
+                clean["runtime_ms"], source, line_number, "runtime_ms"
             )
             current = staged.setdefault(
                 task_id,
@@ -1068,11 +1073,31 @@ def capability_objectives(
         "normal_niv_texture",
         "normal_query_texture_complexity",
     )
-    latency_values = [
-        float(profiles[expert].get("latency_p95") or profiles[expert].get("latency") or 0.0)
-        for expert in experts
-    ]
-    latency_scale = max(max(latency_values), 1e-12)
+    latency_values: list[float] = []
+    failure_rates: list[float] = []
+    for expert in experts:
+        profile = profiles[expert]
+        raw_latency = profile.get("latency_p95")
+        if raw_latency is None:
+            raw_latency = profile.get("latency")
+        try:
+            latency = float(raw_latency)
+            failure_rate = float(profile.get("failure_rate"))
+        except (TypeError, ValueError) as exc:
+            raise Stage5RouterError(
+                f"capability profile {expert!r} lacks numeric latency/failure_rate"
+            ) from exc
+        if not math.isfinite(latency) or latency <= 0.0:
+            raise Stage5RouterError(
+                f"capability profile {expert!r} requires positive train-only latency"
+            )
+        if not math.isfinite(failure_rate) or not 0.0 <= failure_rate <= 1.0:
+            raise Stage5RouterError(
+                f"capability profile {expert!r} has invalid failure_rate"
+            )
+        latency_values.append(latency)
+        failure_rates.append(failure_rate)
+    latency_scale = max(latency_values)
     result = np.zeros_like(probability_matrix)
     for row_index, task_id in enumerate(task_ids):
         boundary = _mean_named_feature(values[row_index], name_to_index, boundary_names, absolute=True)
@@ -1125,7 +1150,7 @@ def capability_objectives(
             ]
             uncertainty = sum(widths) / len(widths) if widths else 0.0
             latency = latency_values[expert_index] / latency_scale
-            reliability_cost = latency + float(profile["failure_rate"])
+            reliability_cost = latency + failure_rates[expert_index]
             result[row_index, expert_index] = (
                 -math.log(max(probability_matrix[row_index, expert_index], 1e-12))
                 + capability_weight * capability_risk

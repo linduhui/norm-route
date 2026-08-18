@@ -7,10 +7,13 @@ from pathlib import Path
 import pytest
 
 from src.normroute.router.expert_bank import (
+    ExpertBankInputError,
     build_expert_capability_bank,
+    read_stage2_runtime_summary,
     write_capability_bank,
 )
 from src.normroute.router.teacher import (
+    TeacherInputError,
     TeacherIsolationError,
     build_teacher,
     read_teacher_parquet,
@@ -21,7 +24,12 @@ from src.normroute.cli.build_expert_capability_bank import main as bank_main
 from src.normroute.cli.build_teacher_targets import main as teacher_main
 
 
-def _inputs(root: Path, *, test_score: str = "0.5") -> tuple[Path, Path]:
+def _inputs(
+    root: Path,
+    *,
+    test_score: str = "0.5",
+    test_runtime: object | None = None,
+) -> tuple[Path, Path]:
     manifest = root / "fold_manifest.csv"
     matrix = root / "evaluator_only" / "routing_matrix_long.csv"
     matrix.parent.mkdir(parents=True)
@@ -70,7 +78,11 @@ def _inputs(root: Path, *, test_score: str = "0.5") -> tuple[Path, Path]:
                     "seed": seed,
                     "expert_name": expert,
                     "final_score": score,
-                    "runtime_ms": runtime,
+                    "runtime_ms": (
+                        test_runtime
+                        if split == "test" and test_runtime is not None
+                        else runtime
+                    ),
                     "label": label,
                     "status": "ok",
                     "error_message": "",
@@ -81,6 +93,55 @@ def _inputs(root: Path, *, test_score: str = "0.5") -> tuple[Path, Path]:
     return manifest, matrix
 
 
+def _stage2_summary(
+    path: Path,
+    matrix: Path,
+    *,
+    poison_test_runtime: bool = False,
+) -> Path:
+    with matrix.open("r", newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    grouped: dict[tuple[str, ...], list[dict[str, str]]] = {}
+    for row in rows:
+        key = (
+            row["expert_name"].casefold(),
+            row["dataset"],
+            row["category"],
+            row["support_set_id"],
+            row["k_shot"],
+            row["seed"],
+        )
+        grouped.setdefault(key, []).append(row)
+    summary_rows = []
+    for key, condition_rows in sorted(grouped.items()):
+        expert, dataset, category, support_set_id, k_shot, seed = key
+        failed = sum(row["status"] != "ok" for row in condition_rows)
+        runtime: object = sum(
+            float(row["runtime_ms"]) for row in condition_rows
+        ) / len(condition_rows)
+        if poison_test_runtime and category == "capsule":
+            runtime = "test-category-poison"
+        summary_rows.append(
+            {
+                "expert": expert,
+                "dataset": dataset,
+                "category": category,
+                "k_shot": k_shot,
+                "seed": seed,
+                "support_set_id": support_set_id,
+                "metrics_path": f"stage2/{expert}/{category}/metrics.json",
+                "num_predictions": len(condition_rows),
+                "num_success": len(condition_rows) - failed,
+                "num_failed": failed,
+                "average_tool_calls": 1.0,
+                "average_runtime_ms": runtime,
+                "abstention_rate": 0.0,
+            }
+        )
+    _write_csv(path, summary_rows)
+    return path
+
+
 def test_teacher_requires_evaluator_only_routing_matrix(tmp_path: Path) -> None:
     manifest, matrix = _inputs(tmp_path)
     unsafe = tmp_path / "routing_matrix_long.csv"
@@ -89,6 +150,24 @@ def test_teacher_requires_evaluator_only_routing_matrix(tmp_path: Path) -> None:
     with pytest.raises(TeacherIsolationError, match="evaluator_only"):
         build_teacher(
             routing_matrix_path=unsafe,
+            fold_manifest_path=manifest,
+            fold="fold0",
+        )
+
+
+def test_teacher_requires_runtime_on_allowed_categories(tmp_path: Path) -> None:
+    manifest, matrix = _inputs(tmp_path)
+    with matrix.open("r", newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    for row in rows:
+        if row["category"] == "bottle":
+            row["runtime_ms"] = ""
+            break
+    _write_csv(matrix, rows)
+
+    with pytest.raises(TeacherInputError, match="missing runtime_ms"):
+        build_teacher(
+            routing_matrix_path=matrix,
             fold_manifest_path=manifest,
             fold="fold0",
         )
@@ -153,7 +232,11 @@ def test_teacher_is_train_only_soft_and_parquet_is_evaluator_only(tmp_path: Path
 
 def test_test_category_changes_cannot_change_teacher_or_capability_bank(tmp_path: Path) -> None:
     manifest_a, matrix_a = _inputs(tmp_path / "a", test_score="0.0")
-    manifest_b, matrix_b = _inputs(tmp_path / "b", test_score="not-even-numeric")
+    manifest_b, matrix_b = _inputs(
+        tmp_path / "b",
+        test_score="not-even-numeric",
+        test_runtime="not-even-numeric",
+    )
     first = build_teacher(
         routing_matrix_path=matrix_a,
         fold_manifest_path=manifest_a,
@@ -192,8 +275,12 @@ def test_test_category_changes_cannot_change_teacher_or_capability_bank(tmp_path
             "boundary_skill",
             "fgbg_skill",
             "lowshot_skill",
+            "latency_p50",
+            "latency_p95",
             "failure_rate",
         }
+        assert profile["latency_p50"] > 0.0
+        assert profile["latency_p95"] >= profile["latency_p50"]
         assert len(profile["capability_vector"]) == len(payload["capability_feature_names"])
     output = tmp_path / "capability_bank.json"
     assert write_capability_bank(bank, output) == output
@@ -236,6 +323,72 @@ def test_capability_bank_does_not_parse_test_feature_records(tmp_path: Path) -> 
     )
 
 
+def test_stage2_runtime_summary_ignores_test_poison_and_crosschecks_bank(
+    tmp_path: Path,
+) -> None:
+    manifest, matrix = _inputs(tmp_path / "inputs")
+    artifact = build_teacher(
+        routing_matrix_path=matrix,
+        fold_manifest_path=manifest,
+        fold="fold0",
+    )
+    clean_path = _stage2_summary(tmp_path / "clean_summary.csv", matrix)
+    poisoned_path = _stage2_summary(
+        tmp_path / "poisoned_summary.csv",
+        matrix,
+        poison_test_runtime=True,
+    )
+    train_categories = {"bottle", "carpet"}
+    clean = read_stage2_runtime_summary(
+        clean_path, allowed_categories=train_categories
+    )
+    poisoned = read_stage2_runtime_summary(
+        poisoned_path, allowed_categories=train_categories
+    )
+    assert clean == poisoned
+
+    task_ids = sorted({row["task_id"] for row in artifact.rows})
+    boundary = {task_id: float(index) for index, task_id in enumerate(task_ids)}
+    fgbg = {
+        task_id: float(len(task_ids) - index)
+        for index, task_id in enumerate(task_ids)
+    }
+    bank = build_expert_capability_bank(
+        artifact,
+        boundary_signals=boundary,
+        fgbg_signals=fgbg,
+        runtime_summary_records=poisoned,
+        bootstrap_replicates=10,
+    ).to_dict()
+    assert bank["runtime_provenance"]["stage2_summary_cross_check"] is True
+    assert bank["runtime_provenance"]["train_categories"] == ["bottle", "carpet"]
+    assert all(
+        profile["latency_p50"] is not None
+        and profile["latency_p95"] is not None
+        for profile in bank["profiles"].values()
+    )
+
+    with clean_path.open("r", newline="", encoding="utf-8") as handle:
+        mismatched_rows = list(csv.DictReader(handle))
+    for row in mismatched_rows:
+        if row["category"] == "bottle":
+            row["average_runtime_ms"] = str(float(row["average_runtime_ms"]) + 1.0)
+            break
+    mismatched_path = tmp_path / "mismatched_summary.csv"
+    _write_csv(mismatched_path, mismatched_rows)
+    mismatched = read_stage2_runtime_summary(
+        mismatched_path, allowed_categories=train_categories
+    )
+    with pytest.raises(ExpertBankInputError, match="average_runtime_ms disagrees"):
+        build_expert_capability_bank(
+            artifact,
+            boundary_signals=boundary,
+            fgbg_signals=fgbg,
+            runtime_summary_records=mismatched,
+            bootstrap_replicates=0,
+        )
+
+
 def test_teacher_bank_and_audit_clis_form_reproducible_pipeline(tmp_path: Path) -> None:
     manifest, matrix = _inputs(tmp_path / "inputs")
     teacher_dir = tmp_path / "outputs" / "evaluator_only" / "fold0"
@@ -263,10 +416,12 @@ def test_teacher_bank_and_audit_clis_form_reproducible_pipeline(tmp_path: Path) 
             }) + "\n")
 
     bank_dir = tmp_path / "outputs" / "capability_bank" / "fold0"
+    stage2_summary = _stage2_summary(tmp_path / "stage2_summary.csv", matrix)
     assert bank_main(
         [
             "--teacher-data", str(teacher_path),
             "--router-features", str(feature_path),
+            "--stage2-summary", str(stage2_summary),
             "--fold", "fold0",
             "--output-dir", str(bank_dir),
             "--bootstrap-replicates", "20",
@@ -287,6 +442,12 @@ def test_teacher_bank_and_audit_clis_form_reproducible_pipeline(tmp_path: Path) 
     report = json.loads(audit_path.read_text(encoding="utf-8"))
     assert report["ok"] is True
     assert all(report["checks"].values())
+    bank = json.loads(bank_path.read_text(encoding="utf-8"))
+    assert bank["runtime_provenance"]["stage2_summary_cross_check"] is True
+    assert all(
+        profile["latency_p50"] > 0.0 and profile["latency_p95"] > 0.0
+        for profile in bank["profiles"].values()
+    )
     assert json.loads((teacher_dir / "run.json").read_text(encoding="utf-8"))["ok"] is True
     assert json.loads((bank_dir / "run.json").read_text(encoding="utf-8"))["ok"] is True
 

@@ -8,7 +8,9 @@ import numpy as np
 import pytest
 
 from src.normroute.cli.run_stage5_router import (
+    capability_objectives,
     main,
+    read_evaluator_outcomes,
     read_router_features,
 )
 from src.normroute.router.feature_bundle import (
@@ -222,6 +224,108 @@ def test_router_feature_reader_projects_all_fbdp_views(tmp_path: Path) -> None:
         read_router_features(path, manifest, feature_view="all")
 
 
+def test_router_evaluator_requires_runtime_ms(tmp_path: Path) -> None:
+    task_id = "image-0|mvtec|bottle|support-0|1|0"
+    manifest = {
+        task_id: {
+            "task_id": task_id,
+            "dataset": "mvtec",
+            "category": "bottle",
+            "k_shot": "1",
+            "seed": "0",
+            "support_set_id": "support-0",
+        }
+    }
+    matrix = tmp_path / "routing_matrix_long.csv"
+    _write_csv(
+        matrix,
+        (
+            "image_id",
+            "dataset",
+            "category",
+            "support_set_id",
+            "k_shot",
+            "seed",
+            "expert_name",
+            "final_score",
+            "label",
+            "status",
+        ),
+        [
+            {
+                "image_id": "image-0",
+                "dataset": "mvtec",
+                "category": "bottle",
+                "support_set_id": "support-0",
+                "k_shot": 1,
+                "seed": 0,
+                "expert_name": expert,
+                "final_score": score,
+                "label": 0,
+                "status": "ok",
+            }
+            for expert, score in (("patchcore", 0.1), ("winclip", 0.2))
+        ],
+    )
+    with pytest.raises(Stage5RouterError, match="runtime_ms"):
+        read_evaluator_outcomes(matrix, manifest)
+
+
+def test_capability_cost_uses_positive_train_only_latency() -> None:
+    experts = ("patchcore", "winclip")
+    profile = {
+        "overall_skill": 0.6,
+        "boundary_skill": 0.6,
+        "fgbg_skill": 0.6,
+        "lowshot_skill": 0.6,
+        "texture_skill": 0.6,
+        "failure_rate": 0.0,
+        "confidence_intervals": {},
+    }
+    bank = {
+        "profiles": {
+            "patchcore": {**profile, "latency": 10.0, "latency_p95": 10.0},
+            "winclip": {**profile, "latency": 100.0, "latency_p95": 100.0},
+        },
+        "difficulty_thresholds": {
+            "boundary": 1.0,
+            "fgbg": 1.0,
+            "texture": 1.0,
+        },
+        "lowshot_k": 1,
+    }
+    objectives = capability_objectives(
+        np.asarray([[0.5, 0.5]]),
+        np.asarray([[0.0]]),
+        ("task-0",),
+        {"task-0": {"k_shot": "1"}},
+        experts,
+        ("normal_signal",),
+        bank,
+        capability_weight=0.0,
+        uncertainty_weight=0.0,
+        cost_weight=1.0,
+    )
+    assert objectives[0, 0] < objectives[0, 1]
+
+    invalid = json.loads(json.dumps(bank))
+    invalid["profiles"]["patchcore"]["latency"] = None
+    invalid["profiles"]["patchcore"]["latency_p95"] = None
+    with pytest.raises(Stage5RouterError, match="latency"):
+        capability_objectives(
+            np.asarray([[0.5, 0.5]]),
+            np.asarray([[0.0]]),
+            ("task-0",),
+            {"task-0": {"k_shot": "1"}},
+            experts,
+            ("normal_signal",),
+            invalid,
+            capability_weight=0.0,
+            uncertainty_weight=0.0,
+            cost_weight=1.0,
+        )
+
+
 def test_stage5_router_cli_writes_label_free_predictions_and_evaluator_metrics(
     tmp_path: Path,
 ) -> None:
@@ -387,6 +491,8 @@ def test_stage5_router_cli_writes_label_free_predictions_and_evaluator_metrics(
     )
     assert metrics["methods"]["learned_router"]["expert_calls_per_task"] == 1
     assert metrics["methods"]["learned_router"]["failure_rate"] == 0.0
+    assert metrics["methods"]["learned_router"]["average_runtime_ms"] is not None
+    assert metrics["runtime_source"] == "evaluator_only_routing_matrix.runtime_ms"
     run = json.loads((output_dir / "run.json").read_text(encoding="utf-8"))
     assert run["ok"] is True
     assert run["predictions"] == str(output_dir / "predictions.jsonl")

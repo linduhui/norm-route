@@ -50,6 +50,12 @@ def audit_teacher_artifacts(
         "teacher_categories_match_manifest_train": teacher_categories == split_categories["train"],
         "teacher_excludes_val_categories": not teacher_categories.intersection(split_categories["val"]),
         "teacher_excludes_test_categories": not teacher_categories.intersection(split_categories["test"]),
+        "teacher_runtime_complete": all(
+            row.get("runtime_ms") is not None
+            and math.isfinite(float(row["runtime_ms"]))
+            and float(row["runtime_ms"]) >= 0.0
+            for row in rows
+        ),
         "crossfit_excludes_own_category": _crossfit_excludes_own_category(rows),
         "soft_distributions_sum_to_one": _soft_distributions_valid(rows),
         "one_hard_oracle_per_task": _hard_oracles_valid(rows),
@@ -61,10 +67,17 @@ def audit_teacher_artifacts(
         "bank_contains_no_query_outcomes": not _forbidden_paths(bank),
         "bank_profiles_cover_teacher_experts": set(bank.get("profiles", {}))
         == {str(row["expert_name"]) for row in rows},
+        "bank_latency_profiles_complete": _bank_latency_profiles_complete(bank),
+        "bank_runtime_provenance_is_train_only": _bank_runtime_provenance_is_train_only(
+            bank, teacher_categories
+        ),
+        "bank_stage2_runtime_cross_check": bool(
+            bank.get("runtime_provenance", {}).get("stage2_summary_cross_check")
+        ),
     }
     failures = [name for name, passed in checks.items() if not passed]
     return {
-        "protocol_version": "stage5.teacher_artifact_audit.v1",
+        "protocol_version": "stage5.teacher_artifact_audit.v2",
         "ok": not failures,
         "fold": fold,
         "checks": checks,
@@ -94,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     except Exception as exc:
         report = {
-            "protocol_version": "stage5.teacher_artifact_audit.v1",
+            "protocol_version": "stage5.teacher_artifact_audit.v2",
             "ok": False,
             "fold": args.fold,
             "checks": {},
@@ -204,6 +217,37 @@ def _forbidden_paths(value: Any, path: str = "root") -> list[str]:
         for index, child in enumerate(value):
             findings.extend(_forbidden_paths(child, f"{path}[{index}]"))
     return findings
+
+
+def _bank_latency_profiles_complete(bank: Mapping[str, Any]) -> bool:
+    profiles = bank.get("profiles", {})
+    if not isinstance(profiles, Mapping) or not profiles:
+        return False
+    for profile in profiles.values():
+        if not isinstance(profile, Mapping):
+            return False
+        values = (profile.get("latency_p50"), profile.get("latency_p95"))
+        try:
+            parsed = tuple(float(value) for value in values)
+        except (TypeError, ValueError):
+            return False
+        if any(not math.isfinite(value) or value <= 0.0 for value in parsed):
+            return False
+        if parsed[1] < parsed[0]:
+            return False
+    return True
+
+
+def _bank_runtime_provenance_is_train_only(
+    bank: Mapping[str, Any], teacher_categories: set[str]
+) -> bool:
+    provenance = bank.get("runtime_provenance", {})
+    return (
+        isinstance(provenance, Mapping)
+        and provenance.get("category_scope") == "train_only"
+        and set(provenance.get("train_categories", ())) == teacher_categories
+        and float(provenance.get("teacher_runtime_coverage", 0.0)) == 1.0
+    )
 
 
 if __name__ == "__main__":

@@ -75,6 +75,7 @@ def _write_stage3_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
                 "error_message": "",
                 "anomaly_map_path": "",
                 "pixel_score_path": "",
+                "runtime_ms": 10.0 + len(long_rows),
                 "label": 1,
                 "mask_path": "/masks/sample-1.png",
                 "run_dir": f"outputs/stage2/{expert}",
@@ -173,6 +174,28 @@ def test_validate_stage3_outputs_rejects_unaligned_expert_samples(tmp_path: Path
     )
 
     assert any("not aligned" in error for error in errors)
+
+
+def test_validate_stage3_outputs_rejects_missing_runtime(tmp_path: Path) -> None:
+    _, evaluator_only_dir, agent_visible_dir, oracle_dir = _write_stage3_fixture(
+        tmp_path
+    )
+    path = evaluator_only_dir / "routing_matrix_long.csv"
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    columns = [column for column in rows[0] if column != "runtime_ms"]
+    for row in rows:
+        row.pop("runtime_ms", None)
+    _write_csv(path, columns, rows)
+
+    errors = validate_stage3_outputs(
+        stage3_root=tmp_path / "outputs" / "stage3",
+        evaluator_only_dir=evaluator_only_dir,
+        agent_visible_dir=agent_visible_dir,
+        oracle_dir=oracle_dir,
+    )
+
+    assert any("runtime_ms" in error for error in errors)
 
 
 def test_export_routing_tasks_cli_writes_expected_files(tmp_path: Path) -> None:

@@ -10,6 +10,7 @@ from ..router.expert_bank import (
     CAPABILITY_BANK_NAME,
     build_expert_capability_bank,
     iter_feature_records_jsonl,
+    read_stage2_runtime_summary,
     write_capability_bank,
 )
 from ..router.teacher import read_teacher_parquet
@@ -20,6 +21,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--teacher-data", required=True)
     parser.add_argument("--router-features", required=True)
+    parser.add_argument(
+        "--stage2-summary",
+        required=True,
+        help=(
+            "Stage 2 summary.csv used only to cross-check train-category "
+            "per-task runtimes and failure counts."
+        ),
+    )
     parser.add_argument("--fold", required=True, choices=tuple(f"fold{i}" for i in range(5)))
     destination = parser.add_mutually_exclusive_group(required=True)
     destination.add_argument("--output")
@@ -40,14 +49,20 @@ def main(argv: list[str] | None = None) -> int:
         input_hashes = {
             "teacher_data": file_sha256(args.teacher_data),
             "router_features": file_sha256(args.router_features),
+            "stage2_summary": file_sha256(args.stage2_summary),
         }
         rows = read_teacher_parquet(args.teacher_data)
         categories = tuple(sorted({str(row["category"]) for row in rows}))
+        runtime_summary_records = read_stage2_runtime_summary(
+            args.stage2_summary,
+            allowed_categories=set(categories),
+        )
         bank = build_expert_capability_bank(
             rows,
             fold=args.fold,
             train_categories=categories,
             feature_records=iter_feature_records_jsonl(args.router_features),
+            runtime_summary_records=runtime_summary_records,
             bootstrap_replicates=args.bootstrap_replicates,
             bootstrap_seed=args.seed,
         )
@@ -62,12 +77,13 @@ def main(argv: list[str] | None = None) -> int:
     }
     output_hashes["failures"] = file_sha256(failures_path)
     run = {
-        "protocol_version": "stage5.capability_bank_build_run.v1",
+        "protocol_version": "stage5.capability_bank_build_run.v2",
         "run_kind": "build_expert_capability_profile_bank",
         "ok": not failures,
         "config": {
             "teacher_data": args.teacher_data,
             "router_features": args.router_features,
+            "stage2_summary": args.stage2_summary,
             "fold": args.fold,
             "bootstrap_replicates": args.bootstrap_replicates,
             "seed": args.seed,
