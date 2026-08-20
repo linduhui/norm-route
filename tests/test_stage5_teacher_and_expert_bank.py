@@ -22,6 +22,7 @@ from src.normroute.router.teacher import (
 from src.normroute.cli.audit_teacher_artifacts import main as audit_main
 from src.normroute.cli.build_expert_capability_bank import main as bank_main
 from src.normroute.cli.build_teacher_targets import main as teacher_main
+from src.normroute.cli.run_stage5_router import balanced_query_task_weights
 
 
 def _inputs(
@@ -155,6 +156,117 @@ def test_teacher_requires_evaluator_only_routing_matrix(tmp_path: Path) -> None:
         )
 
 
+def test_teacher_rejects_parent_traversal_out_of_evaluator_only(
+    tmp_path: Path,
+) -> None:
+    manifest, safe_matrix = _inputs(tmp_path / "inputs")
+    stage3 = tmp_path / "stage3"
+    (stage3 / "evaluator_only").mkdir(parents=True)
+    outside_matrix = stage3 / "routing_matrix_long.csv"
+    outside_matrix.write_bytes(safe_matrix.read_bytes())
+    traversal = stage3 / "evaluator_only" / ".." / "routing_matrix_long.csv"
+
+    with pytest.raises(TeacherIsolationError, match="evaluator_only"):
+        build_teacher(
+            routing_matrix_path=traversal,
+            fold_manifest_path=manifest,
+            fold="fold0",
+        )
+
+
+def test_teacher_rejects_evaluator_only_symlink_or_junction_to_outside(
+    tmp_path: Path,
+) -> None:
+    manifest, safe_matrix = _inputs(tmp_path / "inputs")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "routing_matrix_long.csv").write_bytes(safe_matrix.read_bytes())
+    alias_parent = tmp_path / "stage3"
+    alias_parent.mkdir()
+    evaluator_alias = alias_parent / "evaluator_only"
+    try:
+        evaluator_alias.symlink_to(outside, target_is_directory=True)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"directory symlink/junction creation is unavailable: {exc}")
+
+    with pytest.raises(TeacherIsolationError, match="evaluator_only"):
+        build_teacher(
+            routing_matrix_path=evaluator_alias / "routing_matrix_long.csv",
+            fold_manifest_path=manifest,
+            fold="fold0",
+        )
+
+
+def test_teacher_output_rejects_traversal_and_symlink_escape(
+    tmp_path: Path,
+) -> None:
+    manifest, matrix = _inputs(tmp_path / "inputs")
+    artifact = build_teacher(
+        routing_matrix_path=matrix,
+        fold_manifest_path=manifest,
+        fold="fold0",
+    )
+    stage5 = tmp_path / "stage5"
+    evaluator_only = stage5 / "evaluator_only"
+    evaluator_only.mkdir(parents=True)
+    with pytest.raises(TeacherIsolationError, match="evaluator_only"):
+        write_teacher_parquet(
+            artifact,
+            evaluator_only / ".." / "teacher.parquet",
+        )
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    alias_root = tmp_path / "alias"
+    alias_root.mkdir()
+    alias = alias_root / "evaluator_only"
+    try:
+        alias.symlink_to(outside, target_is_directory=True)
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"directory symlink/junction creation is unavailable: {exc}")
+    with pytest.raises(TeacherIsolationError, match="evaluator_only"):
+        write_teacher_parquet(artifact, alias / "teacher.parquet")
+
+
+def test_teacher_cli_checks_boundary_before_any_input_hash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, safe_matrix = _inputs(tmp_path / "inputs")
+    stage3 = tmp_path / "stage3"
+    (stage3 / "evaluator_only").mkdir(parents=True)
+    outside_matrix = stage3 / "routing_matrix_long.csv"
+    outside_matrix.write_bytes(safe_matrix.read_bytes())
+    traversal = stage3 / "evaluator_only" / ".." / "routing_matrix_long.csv"
+    hashed_paths: list[Path] = []
+
+    def record_hash(path: str | Path) -> str:
+        hashed_paths.append(Path(path))
+        return "0" * 64
+
+    monkeypatch.setattr(
+        "src.normroute.cli.build_teacher_targets.file_sha256",
+        record_hash,
+    )
+    output_dir = tmp_path / "outputs" / "evaluator_only" / "fold0"
+    assert teacher_main(
+        [
+            "--routing-matrix", str(traversal),
+            "--fold-manifest", str(manifest),
+            "--fold", "fold0",
+            "--output-dir", str(output_dir),
+        ]
+    ) == 1
+
+    # The CLI may hash the failures artifact it just wrote, but neither input
+    # may be inspected before the evaluator-only boundary has passed.
+    assert all(path.name == "failures.json" for path in hashed_paths)
+    run = json.loads((output_dir / "run.json").read_text(encoding="utf-8"))
+    assert run["ok"] is False
+    assert run["input_hashes"] == {}
+    assert run["failures"][0]["code"] == "TeacherIsolationError"
+
+
 def test_teacher_requires_runtime_on_allowed_categories(tmp_path: Path) -> None:
     manifest, matrix = _inputs(tmp_path)
     with matrix.open("r", newline="", encoding="utf-8") as handle:
@@ -188,6 +300,150 @@ def test_teacher_ablation_paths_are_explicit_and_still_train_only(tmp_path: Path
     assert {row["split"] for row in artifact.rows} == {"train"}
     assert {row["calibration_scope"] for row in artifact.rows} == {"full_train"}
     assert {row["sample_weight"] for row in artifact.rows} == {1.0}
+
+
+def test_teacher_and_router_share_grouped_repeat_weights(tmp_path: Path) -> None:
+    manifest, matrix = _inputs(tmp_path)
+    artifact = build_teacher(
+        routing_matrix_path=matrix,
+        fold_manifest_path=manifest,
+        fold="fold0",
+    )
+    with manifest.open("r", newline="", encoding="utf-8") as handle:
+        manifest_rows = list(csv.DictReader(handle))
+    by_task = {row["task_id"]: row for row in manifest_rows}
+    train_ids = tuple(
+        row["task_id"] for row in manifest_rows if row["split"] == "train"
+    )
+    router_weights = balanced_query_task_weights(train_ids, by_task)
+    teacher_weights = {
+        row["task_id"]: float(row["sample_weight"])
+        for row in artifact.rows
+    }
+
+    assert teacher_weights == pytest.approx(router_weights)
+
+
+def test_teacher_v3_uses_train_gap_scale_and_validation_sharpness_grid(
+    tmp_path: Path,
+) -> None:
+    manifest, matrix = _inputs(tmp_path)
+    artifact = build_teacher(
+        routing_matrix_path=matrix,
+        fold_manifest_path=manifest,
+        fold="fold0",
+    )
+    metadata = artifact.metadata()
+
+    assert artifact.protocol_version == "stage5.teacher.v3"
+    assert artifact.objective_scale > 0.0
+    assert artifact.minimum_probability in {0.005, 0.01, 0.025}
+    assert metadata["objective_scale_scope"] == "train_categories_only"
+    assert metadata["sharpness_strategy"] == (
+        "train_robust_gap_validation_oracle_nll"
+    )
+    assert metadata["proper_loss"] == (
+        "validation_train_calibrated_zero_one_cost_multiclass_log_loss"
+    )
+    assert len(artifact.temperature_frontier) == 15
+    assert all(
+        item["validation_calibration_loss"] >= 0.0
+        and item["validation_empirical_nll"] >= 0.0
+        and item["validation_multiclass_brier"] >= 0.0
+        and 0.0 <= item["validation_ece"] <= 1.0
+        and item["validation_effective_class_count"] >= 1.0
+        and 0.0 <= item["validation_selection_accuracy"] <= 1.0
+        for item in artifact.temperature_frontier
+    )
+    assert metadata["sharpness_target"] == (
+        "train_calibrated_zero_one_error_plus_runtime_and_failure"
+    )
+    assert metadata["selected_sharpness_diagnostics"]
+    assert set(metadata["teacher_entropy_by_category"]) == {"bottle", "carpet"}
+
+    by_task: dict[str, list[dict]] = {}
+    for row in artifact.rows:
+        by_task.setdefault(row["task_id"], []).append(row)
+    assert all(
+        all(row["soft_utility_probability"] >= artifact.minimum_probability for row in rows)
+        and sum(row["soft_utility_probability"] for row in rows)
+        == pytest.approx(1.0)
+        for rows in by_task.values()
+    )
+
+
+def test_teacher_train_scale_is_invariant_to_validation_mutation(
+    tmp_path: Path,
+) -> None:
+    manifest_a, matrix_a = _inputs(tmp_path / "a")
+    manifest_b, matrix_b = _inputs(tmp_path / "b")
+    with matrix_b.open("r", newline="", encoding="utf-8") as handle:
+        changed = list(csv.DictReader(handle))
+    for row in changed:
+        if row["category"] == "cable":
+            # Validation is allowed to select sharpness, but it cannot refit
+            # train-only Platt parameters or the train objective-gap scale.
+            row["final_score"] = str(100.0 - float(row["final_score"]))
+    _write_csv(matrix_b, changed)
+
+    first = build_teacher(
+        routing_matrix_path=matrix_a,
+        fold_manifest_path=manifest_a,
+        fold="fold0",
+    )
+    second = build_teacher(
+        routing_matrix_path=matrix_b,
+        fold_manifest_path=manifest_b,
+        fold="fold0",
+    )
+
+    assert first.calibrations == second.calibrations
+    assert first.objective_scale == pytest.approx(second.objective_scale)
+    assert first.train_categories == second.train_categories
+
+
+def test_teacher_soft_targets_are_per_expert_affine_score_scale_invariant(
+    tmp_path: Path,
+) -> None:
+    manifest_a, matrix_a = _inputs(tmp_path / "a")
+    manifest_b, matrix_b = _inputs(tmp_path / "b")
+    with matrix_b.open("r", newline="", encoding="utf-8") as handle:
+        scaled = list(csv.DictReader(handle))
+    transforms = {
+        "PatchCore": (10.0, 7.0),
+        "WinCLIP": (3.25, -11.0),
+    }
+    for row in scaled:
+        if row["category"] != "capsule":
+            multiplier, offset = transforms[row["expert_name"]]
+            row["final_score"] = str(
+                multiplier * float(row["final_score"]) + offset
+            )
+    _write_csv(matrix_b, scaled)
+
+    first = build_teacher(
+        routing_matrix_path=matrix_a,
+        fold_manifest_path=manifest_a,
+        fold="fold0",
+    )
+    second = build_teacher(
+        routing_matrix_path=matrix_b,
+        fold_manifest_path=manifest_b,
+        fold="fold0",
+    )
+    first_probabilities = {
+        (row["task_id"], row["expert_name"]): row["soft_utility_probability"]
+        for row in first.rows
+    }
+    second_probabilities = {
+        (row["task_id"], row["expert_name"]): row["soft_utility_probability"]
+        for row in second.rows
+    }
+
+    assert first.objective_scale == pytest.approx(second.objective_scale)
+    assert first.temperature == second.temperature
+    assert first.minimum_probability == second.minimum_probability
+    assert first_probabilities == pytest.approx(second_probabilities)
 
 
 def test_teacher_is_train_only_soft_and_parquet_is_evaluator_only(tmp_path: Path) -> None:
@@ -403,6 +659,20 @@ def test_teacher_bank_and_audit_clis_form_reproducible_pipeline(tmp_path: Path) 
     ) == 0
     teacher_path = teacher_dir / "teacher.parquet"
     assert teacher_path.is_file()
+    teacher_run = json.loads(
+        (teacher_dir / "run.json").read_text(encoding="utf-8")
+    )
+    assert teacher_run["config"]["sharpness_strategy"] == (
+        "train_robust_gap_validation_oracle_nll"
+    )
+    assert teacher_run["config"]["minimum_probabilities"] == [
+        0.005,
+        0.01,
+        0.025,
+    ]
+    assert teacher_run["fold_metadata"]["fold0"]["objective_scale_scope"] == (
+        "train_categories_only"
+    )
 
     feature_path = tmp_path / "router_features.jsonl"
     with manifest.open("r", newline="", encoding="utf-8") as handle:

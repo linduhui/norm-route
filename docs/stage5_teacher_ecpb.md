@@ -57,8 +57,20 @@ because each fold has a distinct Router feature bundle.
 - Every selected train row must carry a finite, non-negative per-query
   `runtime_ms`. The teacher records train-only runtime coverage and range in its
   metadata; a missing latency is an error rather than an implicit zero.
-- Validation rows select temperature. Test outcomes are unavailable until
-  Router predictions have been persisted.
+- Teacher v3 first fits a dimensionless objective-gap scale as the grouped,
+  weighted median positive regret over category-cross-fitted **train** rows.
+  It then forms Boltzmann targets from normalized regret. Validation rows
+  jointly select temperature and a strictly positive per-expert probability
+  floor against an independently defined empirical expert winner: each
+  expert's validation score is transformed by its train-only calibration,
+  thresholded at 0.5, then ranked by zero-one error plus normalized runtime
+  and the explicit failure penalty. Raw scores are never compared across
+  experts, so the selection is invariant to independent positive affine score
+  transforms. This
+  removes the v2 near-identity in which normalized correctness and
+  `softmax(log(correctness) / T)` forced `T=1` and nearly uniform targets.
+- Test outcomes are never parsed by the teacher and remain unavailable to the
+  Router until label-free predictions have been persisted.
 - ECPB reports boundary, foreground/background, low-shot, and available texture
   skills; K-shot curves; latency p50/p95; failure rate/type; difficulty-quantile
   curves; and category-bootstrap confidence intervals.
@@ -69,12 +81,40 @@ because each fold has a distinct Router feature bundle.
 - Router training accepts the soft distributions and sample weights. Optional
   ECPB routing minimizes Router risk plus conditional capability risk,
   uncertainty, and cost; the three weights are selected on validation only.
+  The default uncertainty is query-adaptive and expert-specific: normalized
+  Router predictive entropy gates the risk gap from an active-skill point
+  estimate to its train-category-bootstrap lower confidence bound, plus any
+  failure-rate upper-bound excess. The old absolute interval-width term is
+  retained only as an explicit legacy ablation.
+- Router validation and evaluator reporting reuse the same train-only weighted
+  Platt protocol. Expert raw scores are never compared across methods. The
+  fixed validation loss is zero-one error plus `0.05 * normalized_runtime`;
+  it selects capability, uncertainty, and cost weights without structurally
+  preferring the zero-cost coefficient. Hard and soft supervision use the
+  same category/query inverse-frequency weights.
+- Teacher metadata records held-out empirical NLL, multiclass Brier, ECE,
+  entropy, effective class count, top-1 mass, selected temperature, and
+  probability floor. The three-seed summary additionally emits all 120
+  selected policies and 45 route-change rows for capability, uncertainty,
+  and cost ablations. These diagnostics are evaluator-only evidence, never
+  inference features.
 
 The artifact audit requires complete teacher runtime, non-null finite expert
 latency p50/p95 values, train-only runtime provenance, and a successful Stage 2
 runtime cross-check. Old capability-bank artifacts are therefore not compatible
 with the strengthened acceptance checks and must be rebuilt.
 
-The ablation and required-report matrix is frozen in
-`configs/stage5/teacher_ecpb_v2.json`. It is configuration, not an experiment
-result; claims require real five-fold runs on the experiment server.
+The current ablation and required-report matrix is frozen in
+`configs/stage5/teacher_ecpb_v3.json`; v2 is retained only for historical
+reproducibility. Configuration is not an experiment result. The v3 claim gate
+requires three seeds over five folds for core, capability, uncertainty, and
+cost ablations (plus the legacy-target comparison), followed by paired
+cross-seed aggregation.
+
+The executable closure is `scripts/run_teacher_ecpb_v3_closure.sh`. It runs
+the complete test suite as a hard JUnit gate, rebuilds both v3 and legacy
+teachers plus five ECPBs, executes 120 Router runs, produces per-seed and
+cross-seed summaries, and finishes with
+`final_acceptance_v3.json`. A completed run must also contain
+`selected_capability_policies.csv`, `route_change_diagnostics.csv`, and a
+commit/hash-bound `COMPLETE.txt`.

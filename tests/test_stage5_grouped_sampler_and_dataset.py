@@ -58,3 +58,63 @@ def test_inference_dataset_has_no_label_expert_score_or_teacher() -> None:
         leaked[0][forbidden_field] = 1.0
         with pytest.raises(Stage5DatasetError, match="forbidden inference fields"):
             RouterInferenceDataset(leaked)
+
+
+@pytest.mark.parametrize(
+    "forbidden_feature_name",
+    [
+        "final_score",
+        "image_score",
+        "anomaly_score",
+        "finalScore",
+        "calibrated-utility",
+        "expertOutcome",
+        "raw_scores_v2",
+        "finalscore",
+        "imagescore",
+        "anomalyscore",
+        "expertutility",
+        "expertoutcome",
+        "finalScore2",
+        "scorevalue",
+        "teacherprobability",
+        "mylabelhint",
+        "query_defect_type",
+        "expertutilityvalue",
+        "query_anomaly_type",
+        "predicted_anomaly_type_hint",
+        "groundTruthLabel",
+        "anomalyscorefeature",
+        "utilityloss",
+        "outcomeflag",
+        "scorecard_width",
+        "utilityroom_distance",
+    ],
+)
+def test_inference_dataset_rejects_any_score_utility_or_outcome_feature_name(
+    forbidden_feature_name: str,
+) -> None:
+    leaked = _features()
+    leaked[0]["feature_names"][0] = forbidden_feature_name
+
+    with pytest.raises(Stage5DatasetError, match="forbidden inference fields"):
+        RouterInferenceDataset(leaked)
+
+
+@pytest.mark.parametrize("raw_field", ["final_score", "image_score", "anomaly_score"])
+def test_inference_dataset_rejects_nested_raw_score_fields(raw_field: str) -> None:
+    leaked = _features()
+    leaked[0]["raw_evaluator_payload"] = {raw_field: 0.5}
+
+    with pytest.raises(Stage5DatasetError, match=raw_field):
+        RouterInferenceDataset(leaked)
+
+
+def test_inference_dataset_score_policy_does_not_match_unrelated_stems() -> None:
+    records = _features()
+    for row in records:
+        row["feature_names"] = ["scoring_width", "utilitarian_distance"]
+
+    dataset = RouterInferenceDataset(records)
+
+    assert dataset.feature_names == ("scoring_width", "utilitarian_distance")

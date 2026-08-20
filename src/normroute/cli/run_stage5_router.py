@@ -28,8 +28,13 @@ from ..router.learned_router import (
     Stage5RouterError,
     fit_linear_router,
 )
+from ..router.dataset import is_forbidden_inference_feature_name
 from ..router.expert_bank import read_capability_bank
-from ..router.teacher import read_teacher_parquet
+from ..router.teacher import (
+    ExpertScoreCalibration,
+    fit_expert_score_calibration,
+    read_teacher_parquet,
+)
 from ..routing.quality_metrics import (
     compute_auroc,
     compute_average_precision,
@@ -37,9 +42,10 @@ from ..routing.quality_metrics import (
 )
 
 
-STAGE5_ROUTER_RUN_PROTOCOL_VERSION = "stage5.router_run.v1"
-STAGE5_ROUTER_PREDICTION_PROTOCOL_VERSION = "stage5.router_prediction.v1"
-STAGE5_ROUTER_METRICS_PROTOCOL_VERSION = "stage5.router_metrics.v1"
+STAGE5_ROUTER_RUN_PROTOCOL_VERSION = "stage5.router_run.v2"
+STAGE5_ROUTER_PREDICTION_PROTOCOL_VERSION = "stage5.router_prediction.v2"
+STAGE5_ROUTER_METRICS_PROTOCOL_VERSION = "stage5.router_metrics.v2"
+STAGE5_ROUTER_PER_TASK_PROTOCOL_VERSION = "stage5.router_per_task_metrics.v2"
 MODEL_NAME = "router_model.json"
 PREDICTIONS_NAME = "predictions.jsonl"
 FAILURES_NAME = "failures.json"
@@ -47,26 +53,6 @@ RUN_RECORD_NAME = "run.json"
 METRICS_NAME = "metrics.json"
 PER_TASK_METRICS_NAME = "per_task_metrics.csv"
 _SPLITS = ("train", "val", "test")
-_FORBIDDEN_FEATURE_TOKENS = frozenset(
-    {
-        "label",
-        "labels",
-        "mask",
-        "masks",
-        "defect",
-        "defecttype",
-        "oracle",
-        "expert",
-        "utility",
-        "utilities",
-        "target",
-        "targets",
-        "score",
-        "scores",
-    }
-)
-
-
 @dataclass(frozen=True)
 class FeatureArtifact:
     task_ids: tuple[str, ...]
@@ -140,12 +126,37 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--capability-weight-grid", type=float, nargs="+", default=(0.0, 0.25, 0.5))
-    parser.add_argument("--uncertainty-weight-grid", type=float, nargs="+", default=(0.0, 0.1))
+    parser.add_argument(
+        "--uncertainty-weight-grid",
+        type=float,
+        nargs="+",
+        default=(0.0, 0.25, 0.5, 1.0, 2.0),
+    )
     parser.add_argument("--cost-weight-grid", type=float, nargs="+", default=(0.0, 0.05, 0.1))
+    parser.add_argument(
+        "--validation-runtime-tradeoff",
+        type=float,
+        default=0.05,
+        help=(
+            "Frozen coefficient in the validation empirical loss used to "
+            "select capability/uncertainty/cost weights."
+        ),
+    )
     parser.add_argument(
         "--capability-mode",
         choices=("conditional", "static"),
         default="conditional",
+    )
+    parser.add_argument(
+        "--uncertainty-mode",
+        choices=("entropy_scaled_lcb", "legacy_interval_width"),
+        default="entropy_scaled_lcb",
+        help=(
+            "How ECPB epistemic uncertainty enters routing. The default uses "
+            "query predictive entropy times the expert-specific bootstrap "
+            "lower-confidence-bound risk gap; legacy_interval_width is kept "
+            "only for a reproducibility ablation."
+        ),
     )
     parser.add_argument(
         "--capability-skills",
@@ -268,6 +279,51 @@ def main(argv: list[str] | None = None) -> int:
         supervision_outcomes, experts = read_evaluator_outcomes(
             args.routing_matrix, supervision_manifest
         )
+        validation_runtime_tradeoff = _nonnegative_float_value(
+            args.validation_runtime_tradeoff,
+            "validation_runtime_tradeoff",
+        )
+        train_weight_by_task = balanced_query_task_weights(
+            split_ids["train"], manifest_by_task
+        )
+        validation_weight_by_task = balanced_query_task_weights(
+            split_ids["val"], manifest_by_task
+        )
+        validation_sample_weights = np.asarray(
+            [validation_weight_by_task[task_id] for task_id in split_ids["val"]],
+            dtype=np.float64,
+        )
+        score_calibrations = fit_train_score_calibrations(
+            split_ids["train"],
+            supervision_outcomes,
+            experts,
+            task_weights=train_weight_by_task,
+            fit_categories=sorted(
+                {
+                    manifest_by_task[task_id]["category"]
+                    for task_id in split_ids["train"]
+                }
+            ),
+        )
+        empirical_runtime_scale = fit_train_runtime_scale(
+            split_ids["train"], supervision_outcomes, experts
+        )
+        train_empirical_losses = empirical_routing_losses(
+            split_ids["train"],
+            supervision_outcomes,
+            experts,
+            score_calibrations,
+            runtime_scale=empirical_runtime_scale,
+            runtime_tradeoff=validation_runtime_tradeoff,
+        )
+        validation_empirical_losses = empirical_routing_losses(
+            split_ids["val"],
+            supervision_outcomes,
+            experts,
+            score_calibrations,
+            runtime_scale=empirical_runtime_scale,
+            runtime_tradeoff=validation_runtime_tradeoff,
+        )
         train_sample_weights = None
         if args.supervision == "soft_teacher":
             train_targets, train_sample_weights, teacher_experts = read_soft_teacher_supervision(
@@ -280,13 +336,28 @@ def main(argv: list[str] | None = None) -> int:
             )
             if teacher_experts != experts:
                 raise Stage5RouterError("teacher and routing matrix expert sets disagree")
-        else:
-            train_targets = oracle_targets(
-                split_ids["train"], supervision_outcomes, experts
+            expected_weights = np.asarray(
+                [train_weight_by_task[task_id] for task_id in split_ids["train"]],
+                dtype=np.float64,
             )
-        validation_targets = oracle_targets(
-            split_ids["val"], supervision_outcomes, experts
-        )
+            if not bool(
+                np.allclose(
+                    train_sample_weights,
+                    expected_weights,
+                    rtol=1e-10,
+                    atol=1e-10,
+                )
+            ):
+                raise Stage5RouterError(
+                    "teacher weights disagree with fold grouped/inverse-frequency weights"
+                )
+        else:
+            train_targets = np.argmin(train_empirical_losses, axis=1)
+            train_sample_weights = np.asarray(
+                [train_weight_by_task[task_id] for task_id in split_ids["train"]],
+                dtype=np.float64,
+            )
+        validation_targets = np.argmin(validation_empirical_losses, axis=1)
         fit = fit_linear_router(
             artifact.values[split_indices["train"]],
             train_targets,
@@ -301,6 +372,7 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             device=args.device,
             train_sample_weights=train_sample_weights,
+            validation_sample_weights=validation_sample_weights,
         )
 
         capability_policy: dict[str, Any] | None = None
@@ -319,7 +391,6 @@ def main(argv: list[str] | None = None) -> int:
                 artifact.values[split_indices["val"]],
                 split_ids["val"],
                 manifest_by_task,
-                supervision_outcomes,
                 experts,
                 artifact.feature_names,
                 capability_bank,
@@ -328,6 +399,10 @@ def main(argv: list[str] | None = None) -> int:
                 cost_weight_grid=args.cost_weight_grid,
                 capability_mode=args.capability_mode,
                 enabled_skills=args.capability_skills,
+                uncertainty_mode=args.uncertainty_mode,
+                validation_empirical_losses=validation_empirical_losses,
+                validation_runtime_tradeoff=validation_runtime_tradeoff,
+                validation_sample_weights=validation_sample_weights,
             )
 
         # Freeze predictions before test labels are passed to evaluator metrics.
@@ -350,6 +425,7 @@ def main(argv: list[str] | None = None) -> int:
                 cost_weight=capability_policy["cost_weight"],
                 capability_mode=args.capability_mode,
                 enabled_skills=args.capability_skills,
+                uncertainty_mode=args.uncertainty_mode,
             )
             selected_indices = np.argmin(selection_objectives, axis=1)
         selected = {
@@ -397,26 +473,46 @@ def main(argv: list[str] | None = None) -> int:
             raise Stage5RouterError(
                 "train/validation and test evaluator expert sets disagree"
             )
+        test_empirical_losses = empirical_routing_losses(
+            split_ids["test"],
+            test_outcomes,
+            experts,
+            score_calibrations,
+            runtime_scale=empirical_runtime_scale,
+            runtime_tradeoff=validation_runtime_tradeoff,
+        )
         global_best = select_global_best_expert(
             split_ids["train"], supervision_outcomes, experts
         )
         learned_metrics, per_task_rows = evaluate_selection(
-            split_ids["test"], test_outcomes, selected, experts
+            split_ids["test"],
+            test_outcomes,
+            selected,
+            experts,
+            score_calibrations=score_calibrations,
+            empirical_losses=test_empirical_losses,
         )
         global_metrics, _ = evaluate_selection(
             split_ids["test"],
             test_outcomes,
             {task_id: global_best for task_id in split_ids["test"]},
             experts,
+            score_calibrations=score_calibrations,
+            empirical_losses=test_empirical_losses,
         )
         oracle_selection = {
-            task_id: experts[
-                int(oracle_targets((task_id,), test_outcomes, experts)[0])
-            ]
-            for task_id in split_ids["test"]
+            task_id: experts[int(index)]
+            for task_id, index in zip(
+                split_ids["test"], np.argmin(test_empirical_losses, axis=1)
+            )
         }
         oracle_metrics, _ = evaluate_selection(
-            split_ids["test"], test_outcomes, oracle_selection, experts
+            split_ids["test"],
+            test_outcomes,
+            oracle_selection,
+            experts,
+            score_calibrations=score_calibrations,
+            empirical_losses=test_empirical_losses,
         )
         metrics = {
             "protocol_version": STAGE5_ROUTER_METRICS_PROTOCOL_VERSION,
@@ -444,6 +540,24 @@ def main(argv: list[str] | None = None) -> int:
             "capability_policy": capability_policy,
             "capability_mode": args.capability_mode,
             "capability_skills": list(args.capability_skills),
+            "uncertainty_mode": args.uncertainty_mode,
+            "validation_empirical_utility": (
+                "train_calibrated_zero_one_error_plus_normalized_runtime"
+            ),
+            "validation_runtime_tradeoff": validation_runtime_tradeoff,
+            "repeat_weighting": (
+                "equal_category_equal_query_inverse_variant_frequency"
+            ),
+            "evaluation_score_space": (
+                "train_only_per_expert_weighted_platt_probability"
+            ),
+            "score_calibrations": {
+                expert: score_calibrations[expert].to_dict()
+                for expert in experts
+            },
+            "per_task_metrics_protocol_version": (
+                STAGE5_ROUTER_PER_TASK_PROTOCOL_VERSION
+            ),
             "global_best_expert_from_train": global_best,
             "methods": {
                 "learned_router": learned_metrics,
@@ -471,6 +585,9 @@ def main(argv: list[str] | None = None) -> int:
             "training_backend": fit.model.backend,
             "supervision": args.supervision,
             "capability_policy": capability_policy,
+            "uncertainty_mode": args.uncertainty_mode,
+            "validation_runtime_tradeoff": validation_runtime_tradeoff,
+            "empirical_runtime_scale_ms": empirical_runtime_scale,
             "source_feature_view": artifact.source_feature_view,
             "source_bir_ablation": artifact.source_ablation,
             "source_fbdp_ablation": artifact.source_fbdp_ablation,
@@ -517,6 +634,14 @@ def main(argv: list[str] | None = None) -> int:
             "cost_weight_grid": list(args.cost_weight_grid),
             "capability_mode": args.capability_mode,
             "capability_skills": list(args.capability_skills),
+            "uncertainty_mode": args.uncertainty_mode,
+            "validation_runtime_tradeoff": args.validation_runtime_tradeoff,
+            "validation_selection_metric": (
+                "train_calibrated_zero_one_error_plus_normalized_runtime"
+            ),
+            "repeat_weighting": (
+                "equal_category_equal_query_inverse_variant_frequency"
+            ),
             "model_kind": "class_balanced_linear_softmax_soft_targets",
             "standardization": "train_only_feature_mean_std",
             "supervision_target": args.supervision,
@@ -873,21 +998,129 @@ def read_evaluator_outcomes(
     return outcomes, experts
 
 
-def oracle_targets(
+def fit_train_score_calibrations(
     task_ids: Sequence[str],
     outcomes: Mapping[str, TaskOutcome],
     experts: Sequence[str],
+    *,
+    task_weights: Mapping[str, float],
+    fit_categories: Sequence[str],
+) -> dict[str, ExpertScoreCalibration]:
+    """Fit scale-invariant expert decisions using train categories only."""
+
+    if not task_ids or len(experts) < 2:
+        raise Stage5RouterError(
+            "score calibration requires train rows and at least two experts"
+        )
+    labels = [outcomes[task_id].label for task_id in task_ids]
+    if set(labels) != {0, 1}:
+        raise Stage5RouterError(
+            "score calibration requires both train labels"
+        )
+    if set(task_weights) != set(task_ids):
+        raise Stage5RouterError("score calibration weights are misaligned")
+    weights = [float(task_weights[task_id]) for task_id in task_ids]
+    if any(not math.isfinite(value) or value <= 0.0 for value in weights):
+        raise Stage5RouterError("score calibration weights are invalid")
+    result: dict[str, ExpertScoreCalibration] = {}
+    for expert in experts:
+        scores = [float(outcomes[task_id].scores[expert]) for task_id in task_ids]
+        result[expert] = fit_expert_score_calibration(
+            expert_name=expert,
+            labels=labels,
+            scores=scores,
+            weights=weights,
+            fit_categories=fit_categories,
+        )
+    return result
+
+
+def balanced_query_task_weights(
+    task_ids: Sequence[str],
+    manifest_by_task: Mapping[str, Mapping[str, str]],
+) -> dict[str, float]:
+    """Match teacher category/query balancing for repeated K/seed rows."""
+
+    if not task_ids:
+        raise Stage5RouterError("cannot weight an empty task split")
+    grouped: dict[str, dict[tuple[str, str, str], list[str]]] = {}
+    for task_id in task_ids:
+        if task_id not in manifest_by_task:
+            raise Stage5RouterError("task weighting manifest coverage disagrees")
+        row = manifest_by_task[task_id]
+        category = str(row["category"])
+        query_id = str(row.get("sample_id") or row.get("image_id") or "").strip()
+        if not query_id:
+            raise Stage5RouterError("task weighting requires an opaque query id")
+        group = (str(row.get("dataset", "")), category, query_id)
+        grouped.setdefault(category, {}).setdefault(group, []).append(task_id)
+    raw: dict[str, float] = {}
+    for query_groups in grouped.values():
+        group_mass = 1.0 / len(query_groups)
+        for variants in query_groups.values():
+            per_variant = group_mass / len(variants)
+            for task_id in variants:
+                raw[task_id] = per_variant
+    return {task_id: raw[task_id] for task_id in task_ids}
+
+
+def fit_train_runtime_scale(
+    task_ids: Sequence[str],
+    outcomes: Mapping[str, TaskOutcome],
+    experts: Sequence[str],
+) -> float:
+    values = [
+        float(outcomes[task_id].runtimes_ms[expert])
+        for task_id in task_ids
+        for expert in experts
+        if outcomes[task_id].runtimes_ms[expert] is not None
+    ]
+    if len(values) != len(task_ids) * len(experts):
+        raise Stage5RouterError("train runtime calibration is incomplete")
+    if any(not math.isfinite(value) or value < 0.0 for value in values):
+        raise Stage5RouterError("train runtime calibration is invalid")
+    maximum = max(values, default=0.0)
+    return maximum if maximum > 1e-12 else 1.0
+
+
+def empirical_routing_losses(
+    task_ids: Sequence[str],
+    outcomes: Mapping[str, TaskOutcome],
+    experts: Sequence[str],
+    calibrations: Mapping[str, ExpertScoreCalibration],
+    *,
+    runtime_scale: float,
+    runtime_tradeoff: float,
 ) -> Any:
-    np = _numpy()
-    targets = []
+    """Build scale-invariant observed loss without comparing raw scores."""
+
+    if set(calibrations) != set(experts):
+        raise Stage5RouterError("score calibration expert set disagrees")
+    if not math.isfinite(runtime_scale) or runtime_scale <= 0.0:
+        raise Stage5RouterError("empirical runtime scale must be positive")
+    tradeoff = _nonnegative_float_value(
+        runtime_tradeoff, "runtime_tradeoff"
+    )
+    rows: list[list[float]] = []
     for task_id in task_ids:
         outcome = outcomes[task_id]
-        utilities = [
-            _oriented_utility(outcome.label, outcome.scores[expert])
-            for expert in experts
-        ]
-        targets.append(max(range(len(experts)), key=lambda index: utilities[index]))
-    return np.asarray(targets, dtype=np.int64)
+        row = []
+        for expert in experts:
+            anomaly_probability = calibrations[expert].predict(
+                outcome.scores[expert]
+            )
+            classification_error = float(
+                int(anomaly_probability >= 0.5) != outcome.label
+            )
+            runtime = outcome.runtimes_ms[expert]
+            if runtime is None or not math.isfinite(float(runtime)) or float(runtime) < 0.0:
+                raise Stage5RouterError("empirical routing runtime is invalid")
+            row.append(
+                classification_error
+                + tradeoff * float(runtime) / runtime_scale
+            )
+        rows.append(row)
+    return _numpy().asarray(rows, dtype=_numpy().float64)
 
 
 def read_soft_teacher_supervision(
@@ -947,7 +1180,6 @@ def select_capability_policy(
     validation_values: Any,
     validation_task_ids: Sequence[str],
     manifest_by_task: Mapping[str, Mapping[str, str]],
-    outcomes: Mapping[str, TaskOutcome],
     experts: Sequence[str],
     feature_names: Sequence[str],
     bank: Mapping[str, Any],
@@ -957,13 +1189,38 @@ def select_capability_policy(
     cost_weight_grid: Sequence[float],
     capability_mode: str = "conditional",
     enabled_skills: Sequence[str] = ("boundary", "fgbg", "lowshot", "texture"),
+    uncertainty_mode: str = "entropy_scaled_lcb",
+    validation_empirical_losses: Any,
+    validation_runtime_tradeoff: float,
+    validation_sample_weights: Any,
 ) -> dict[str, Any]:
-    """Choose risk/capability/uncertainty/cost weights on validation only."""
+    """Choose weights by a frozen, scale-invariant validation loss."""
 
     grids = (
         _nonnegative_grid(capability_weight_grid, "capability_weight_grid"),
         _nonnegative_grid(uncertainty_weight_grid, "uncertainty_weight_grid"),
         _nonnegative_grid(cost_weight_grid, "cost_weight_grid"),
+    )
+    np = _numpy()
+    empirical_losses = np.asarray(
+        validation_empirical_losses, dtype=np.float64
+    )
+    if empirical_losses.shape != (len(validation_task_ids), len(experts)):
+        raise Stage5RouterError(
+            "validation empirical loss matrix has invalid shape"
+        )
+    if not bool(np.all(np.isfinite(empirical_losses))):
+        raise Stage5RouterError("validation empirical losses must be finite")
+    sample_weights = np.asarray(validation_sample_weights, dtype=np.float64)
+    if (
+        sample_weights.shape != (len(validation_task_ids),)
+        or not bool(np.all(np.isfinite(sample_weights)))
+        or bool(np.any(sample_weights <= 0.0))
+    ):
+        raise Stage5RouterError("validation sample weights are invalid")
+    weight_sum = float(np.sum(sample_weights))
+    frozen_runtime_tradeoff = _nonnegative_float_value(
+        validation_runtime_tradeoff, "validation_runtime_tradeoff"
     )
     frontier: list[dict[str, float]] = []
     for capability_weight in grids[0]:
@@ -982,34 +1239,46 @@ def select_capability_policy(
                     cost_weight=cost_weight,
                     capability_mode=capability_mode,
                     enabled_skills=enabled_skills,
+                    uncertainty_mode=uncertainty_mode,
                 )
-                np = _numpy()
                 indices = np.argmin(objectives, axis=1)
                 agreements = []
                 regrets = []
-                for task_id, selected_index in zip(validation_task_ids, indices):
-                    outcome = outcomes[task_id]
-                    utilities = [
-                        _oriented_utility(outcome.label, outcome.scores[expert])
-                        for expert in experts
-                    ]
-                    best = max(range(len(experts)), key=lambda index: (utilities[index], -index))
-                    agreements.append(int(selected_index) == best)
-                    regrets.append(utilities[best] - utilities[int(selected_index)])
+                selected_losses = []
+                for row_index, selected_index in enumerate(indices):
+                    best = int(np.argmin(empirical_losses[row_index]))
+                    selected_loss = float(
+                        empirical_losses[row_index, int(selected_index)]
+                    )
+                    best_loss = float(empirical_losses[row_index, best])
+                    agreements.append(float(int(selected_index) == best))
+                    regrets.append(selected_loss - best_loss)
+                    selected_losses.append(selected_loss)
                 frontier.append(
                     {
                         "capability_weight": capability_weight,
                         "uncertainty_weight": uncertainty_weight,
                         "cost_weight": cost_weight,
-                        "validation_selection_accuracy": sum(agreements) / len(agreements),
-                        "validation_oracle_regret": sum(regrets) / len(regrets),
+                        "validation_selection_accuracy": float(
+                            np.dot(sample_weights, agreements) / weight_sum
+                        ),
+                        "validation_oracle_regret": float(
+                            np.dot(sample_weights, regrets) / weight_sum
+                        ),
+                        "validation_empirical_loss": (
+                            float(
+                                np.dot(sample_weights, selected_losses)
+                                / weight_sum
+                            )
+                        ),
                     }
                 )
     selected = min(
         frontier,
         key=lambda row: (
-            -row["validation_selection_accuracy"],
+            row["validation_empirical_loss"],
             row["validation_oracle_regret"],
+            -row["validation_selection_accuracy"],
             row["capability_weight"] + row["uncertainty_weight"] + row["cost_weight"],
             row["capability_weight"],
             row["uncertainty_weight"],
@@ -1019,9 +1288,17 @@ def select_capability_policy(
     return {
         **selected,
         "selection_rule": "argmin_router_risk_plus_capability_uncertainty_cost",
+        "selection_metric": (
+            "mean_train_calibrated_zero_one_error_plus_normalized_runtime"
+        ),
+        "validation_runtime_tradeoff": frozen_runtime_tradeoff,
+        "repeat_weighting": (
+            "equal_category_equal_query_inverse_variant_frequency"
+        ),
         "hyperparameter_split": "validation_only",
         "capability_mode": capability_mode,
         "enabled_skills": list(enabled_skills),
+        "uncertainty_mode": uncertainty_mode,
         "frontier": frontier,
     }
 
@@ -1040,12 +1317,17 @@ def capability_objectives(
     cost_weight: float,
     capability_mode: str = "conditional",
     enabled_skills: Sequence[str] = ("boundary", "fgbg", "lowshot", "texture"),
+    uncertainty_mode: str = "entropy_scaled_lcb",
 ) -> Any:
     """Form the one-call conditional expert objective without evaluator inputs."""
 
     np = _numpy()
     probability_matrix = np.asarray(probabilities, dtype=np.float64)
     values = np.asarray(feature_values, dtype=np.float64)
+    if len(experts) < 2:
+        raise Stage5RouterError(
+            "capability objectives require at least two experts"
+        )
     if probability_matrix.shape != (len(task_ids), len(experts)):
         raise Stage5RouterError("Router probabilities have invalid shape")
     if values.ndim != 2 or values.shape[0] != len(task_ids) or values.shape[1] != len(feature_names):
@@ -1055,6 +1337,8 @@ def capability_objectives(
         raise Stage5RouterError("capability bank expert set disagrees")
     if capability_mode not in {"conditional", "static"}:
         raise Stage5RouterError("capability_mode must be conditional or static")
+    if uncertainty_mode not in {"entropy_scaled_lcb", "legacy_interval_width"}:
+        raise Stage5RouterError("unsupported uncertainty_mode")
     enabled = set(enabled_skills)
     if not enabled.issubset({"boundary", "fgbg", "lowshot", "texture"}):
         raise Stage5RouterError("enabled_skills contains an unsupported capability")
@@ -1100,6 +1384,23 @@ def capability_objectives(
     latency_scale = max(latency_values)
     result = np.zeros_like(probability_matrix)
     for row_index, task_id in enumerate(task_ids):
+        row_probabilities = probability_matrix[row_index]
+        if (
+            not np.all(np.isfinite(row_probabilities))
+            or np.any(row_probabilities < 0.0)
+            or not math.isclose(
+                float(np.sum(row_probabilities)),
+                1.0,
+                rel_tol=1e-7,
+                abs_tol=1e-7,
+            )
+        ):
+            raise Stage5RouterError("Router probabilities must be finite and sum to one")
+        predictive_entropy = -sum(
+            float(probability) * math.log(max(float(probability), 1e-12))
+            for probability in row_probabilities
+        ) / math.log(len(experts))
+        predictive_entropy = min(max(predictive_entropy, 0.0), 1.0)
         boundary = _mean_named_feature(values[row_index], name_to_index, boundary_names, absolute=True)
         fgbg = _mean_named_feature(values[row_index], name_to_index, fgbg_names)
         texture = _mean_named_feature(values[row_index], name_to_index, texture_names, absolute=True)
@@ -1144,11 +1445,13 @@ def capability_objectives(
                 interval_names.append("texture_skill")
             capability_risk = -math.log(max(sum(active_skills) / len(active_skills), 1e-12))
             intervals = profile.get("confidence_intervals", {})
-            widths = [
-                max(0.0, float(intervals[name]["upper"]) - float(intervals[name]["lower"]))
-                for name in interval_names if name in intervals
-            ]
-            uncertainty = sum(widths) / len(widths) if widths else 0.0
+            uncertainty = _capability_uncertainty_risk(
+                profile,
+                active_skills,
+                interval_names,
+                predictive_entropy=predictive_entropy,
+                mode=uncertainty_mode,
+            )
             latency = latency_values[expert_index] / latency_scale
             reliability_cost = latency + failure_rates[expert_index]
             result[row_index, expert_index] = (
@@ -1158,6 +1461,85 @@ def capability_objectives(
                 + cost_weight * reliability_cost
             )
     return result
+
+
+def _capability_uncertainty_risk(
+    profile: Mapping[str, Any],
+    active_skills: Sequence[float],
+    interval_names: Sequence[str],
+    *,
+    predictive_entropy: float,
+    mode: str,
+) -> float:
+    """Return an expert- and query-specific ECPB uncertainty penalty.
+
+    ``entropy_scaled_lcb`` decomposes conservative capability risk into the
+    point-estimate risk plus an uncertainty increment.  The increment is the
+    gap to the category-bootstrap lower confidence bound, activated in
+    proportion to the Router's normalized predictive entropy for this query.
+    A failure-rate upper-bound excess is included as reliability uncertainty.
+    All profile statistics were fitted from the current fold's train
+    categories; no evaluator outcome is consumed here.
+    """
+
+    intervals = profile.get("confidence_intervals", {})
+    if not isinstance(intervals, Mapping):
+        raise Stage5RouterError("capability confidence_intervals must be a mapping")
+    if mode == "legacy_interval_width":
+        widths = []
+        for name in interval_names:
+            if name not in intervals:
+                continue
+            lower, upper = _confidence_bounds(intervals[name], name)
+            widths.append(upper - lower)
+        return sum(widths) / len(widths) if widths else 0.0
+
+    point_skill = sum(active_skills) / len(active_skills)
+    lower_skills: list[float] = []
+    for point, name in zip(active_skills, interval_names):
+        if name not in intervals:
+            lower_skills.append(float(point))
+            continue
+        lower, _ = _confidence_bounds(intervals[name], name)
+        # Bootstrap intervals may not be perfectly centred on the point
+        # estimate.  Only uncertainty below the estimate is penalized.
+        lower_skills.append(min(float(point), lower))
+    lower_skill = sum(lower_skills) / len(lower_skills)
+    lcb_risk_gap = max(
+        0.0,
+        -math.log(max(lower_skill, 1e-12))
+        + math.log(max(point_skill, 1e-12)),
+    )
+
+    failure_excess = 0.0
+    if "failure_rate" in intervals:
+        _, failure_upper = _confidence_bounds(
+            intervals["failure_rate"], "failure_rate"
+        )
+        failure_rate = float(profile.get("failure_rate"))
+        failure_excess = max(0.0, failure_upper - failure_rate)
+    return predictive_entropy * (lcb_risk_gap + failure_excess)
+
+
+def _confidence_bounds(value: Any, name: str) -> tuple[float, float]:
+    if not isinstance(value, Mapping):
+        raise Stage5RouterError(f"confidence interval {name!r} must be a mapping")
+    try:
+        lower = float(value["lower"])
+        upper = float(value["upper"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise Stage5RouterError(
+            f"confidence interval {name!r} requires numeric lower/upper bounds"
+        ) from exc
+    if (
+        not math.isfinite(lower)
+        or not math.isfinite(upper)
+        or lower < 0.0
+        or upper > 1.0
+        or upper < lower
+    ):
+        raise Stage5RouterError(f"confidence interval {name!r} is invalid")
+    return lower, upper
 
 
 def _mean_named_feature(
@@ -1182,6 +1564,16 @@ def _nonnegative_grid(values: Sequence[float], name: str) -> tuple[float, ...]:
         raise Stage5RouterError(f"{name} must be numeric") from exc
     if not result or any(not math.isfinite(value) or value < 0.0 for value in result) or tuple(sorted(set(result))) != result:
         raise Stage5RouterError(f"{name} must be sorted, unique, finite, and non-negative")
+    return result
+
+
+def _nonnegative_float_value(value: Any, name: str) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as exc:
+        raise Stage5RouterError(f"{name} must be numeric") from exc
+    if not math.isfinite(result) or result < 0.0:
+        raise Stage5RouterError(f"{name} must be finite and non-negative")
     return result
 
 
@@ -1216,7 +1608,18 @@ def evaluate_selection(
     outcomes: Mapping[str, TaskOutcome],
     selected: Mapping[str, str],
     experts: Sequence[str],
+    *,
+    score_calibrations: Mapping[str, ExpertScoreCalibration],
+    empirical_losses: Any,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    np = _numpy()
+    loss_matrix = np.asarray(empirical_losses, dtype=np.float64)
+    if loss_matrix.shape != (
+        len(task_ids), len(experts)
+    ):
+        raise Stage5RouterError("evaluation empirical loss matrix is misaligned")
+    if set(score_calibrations) != set(experts):
+        raise Stage5RouterError("evaluation score calibrations disagree")
     labels: list[int] = []
     image_scores: list[float] = []
     regrets: list[float] = []
@@ -1225,7 +1628,7 @@ def evaluate_selection(
     runtimes: list[float | None] = []
     counts = {expert: 0 for expert in experts}
     rows: list[dict[str, Any]] = []
-    for task_id in task_ids:
+    for row_index, task_id in enumerate(task_ids):
         outcome = outcomes[task_id]
         expert = selected.get(task_id)
         if expert not in experts:
@@ -1233,8 +1636,8 @@ def evaluate_selection(
                 f"selection is missing/invalid for task_id={task_id!r}"
             )
         utilities = {
-            name: _oriented_utility(outcome.label, outcome.scores[name])
-            for name in experts
+            name: -float(loss_matrix[row_index, index])
+            for index, name in enumerate(experts)
         }
         oracle_expert = max(experts, key=lambda name: utilities[name])
         oracle_utility = utilities[oracle_expert]
@@ -1246,7 +1649,10 @@ def evaluate_selection(
             selected_utility - worst_utility
         ) / span
         labels.append(outcome.label)
-        image_scores.append(outcome.scores[expert])
+        calibrated_score = score_calibrations[expert].predict(
+            outcome.scores[expert]
+        )
+        image_scores.append(calibrated_score)
         regrets.append(regret)
         normalized_utilities.append(normalized)
         agreements.append(1.0 if expert == oracle_expert else 0.0)
@@ -1254,15 +1660,17 @@ def evaluate_selection(
         counts[expert] += 1
         rows.append(
             {
+                "protocol_version": STAGE5_ROUTER_PER_TASK_PROTOCOL_VERSION,
                 "evaluator_only": True,
                 "task_id": task_id,
                 "label": outcome.label,
                 "selected_expert": expert,
                 "oracle_expert": oracle_expert,
                 "selected_score": outcome.scores[expert],
-                "selected_oriented_utility": selected_utility,
-                "oracle_oriented_utility": oracle_utility,
-                "oracle_regret": regret,
+                "selected_calibrated_score": calibrated_score,
+                "selected_empirical_utility": selected_utility,
+                "oracle_empirical_utility": oracle_utility,
+                "empirical_regret": regret,
                 "normalized_utility": normalized,
                 "runtime_ms": outcome.runtimes_ms[expert],
             }
@@ -1291,6 +1699,8 @@ def evaluate_selection(
         "selection_counts": counts,
         "expert_calls_per_task": 1,
         "failure_rate": 0.0,
+        "score_space": "train_only_per_expert_weighted_platt_probability",
+        "utility_space": "negative_train_calibrated_zero_one_runtime_loss",
     }
     return metrics, rows
 
@@ -1299,15 +1709,17 @@ def write_per_task_metrics(
     path: Path, rows: Sequence[Mapping[str, Any]]
 ) -> Path:
     columns = (
+        "protocol_version",
         "evaluator_only",
         "task_id",
         "label",
         "selected_expert",
         "oracle_expert",
         "selected_score",
-        "selected_oriented_utility",
-        "oracle_oriented_utility",
-        "oracle_regret",
+        "selected_calibrated_score",
+        "selected_empirical_utility",
+        "oracle_empirical_utility",
+        "empirical_regret",
         "normalized_utility",
         "runtime_ms",
     )
@@ -1381,15 +1793,10 @@ def _assert_feature_names_safe(names: Sequence[str]) -> None:
     if not names or len(set(names)) != len(names):
         raise Stage5RouterError("Router feature names must be non-empty and unique")
     for name in names:
-        normalized = "".join(
-            character.lower() if character.isalnum() else "_"
-            for character in name
-        )
-        tokens = {token for token in normalized.split("_") if token}
-        forbidden = sorted(tokens.intersection(_FORBIDDEN_FEATURE_TOKENS))
-        if forbidden:
+        if is_forbidden_inference_feature_name(name):
             raise Stage5RouterError(
-                f"Router feature {name!r} contains forbidden tokens {forbidden}"
+                f"Router feature {name!r} violates the inference isolation policy "
+                "(forbidden tokens)"
             )
 
 
@@ -1428,10 +1835,6 @@ def _nonnegative_float(
             f"{path}:{line_number} has negative {field}"
         )
     return parsed
-
-
-def _oriented_utility(label: int, score: float) -> float:
-    return score if label == 1 else -score
 
 
 def _atomic_write_json(path: Path, value: Any) -> Path:
@@ -1492,12 +1895,12 @@ def _numpy() -> Any:
 __all__ = [
     "FeatureArtifact",
     "STAGE5_ROUTER_METRICS_PROTOCOL_VERSION",
+    "STAGE5_ROUTER_PER_TASK_PROTOCOL_VERSION",
     "STAGE5_ROUTER_PREDICTION_PROTOCOL_VERSION",
     "STAGE5_ROUTER_RUN_PROTOCOL_VERSION",
     "TaskOutcome",
     "evaluate_selection",
     "main",
-    "oracle_targets",
     "parse_args",
     "read_evaluator_outcomes",
     "read_fold_manifest",

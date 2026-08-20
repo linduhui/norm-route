@@ -18,7 +18,7 @@ import tempfile
 from typing import Any, Iterable, Mapping, Sequence
 
 
-TEACHER_PROTOCOL_VERSION = "stage5.teacher.v2"
+TEACHER_PROTOCOL_VERSION = "stage5.teacher.v3"
 TEACHER_PARQUET_NAME = "teacher.parquet"
 TEACHER_COLUMNS = (
     "protocol_version",
@@ -135,7 +135,13 @@ class TeacherArtifact:
     temperature_frontier: tuple[dict[str, float], ...] = ()
     calibration_strategy: str = "leave_one_train_category_out"
     repeat_weighting: str = "equal_category_equal_query_inverse_variant_frequency"
-    proper_loss: str = "negative_log_correctness_probability"
+    sharpness_strategy: str = "train_robust_gap_validation_oracle_nll"
+    objective_scale: float = 1.0
+    minimum_probability: float = 0.005
+    minimum_probability_candidates: tuple[float, ...] = (0.005, 0.01, 0.025)
+    proper_loss: str = (
+        "validation_train_calibrated_zero_one_cost_multiclass_log_loss"
+    )
     cost_weight: float = 0.05
     failure_penalty: float = 2.0
     protocol_version: str = TEACHER_PROTOCOL_VERSION
@@ -146,6 +152,21 @@ class TeacherArtifact:
             for row in self.rows
             if row.get("runtime_ms") is not None
         ]
+        selected_diagnostics = next(
+            (
+                dict(item)
+                for item in self.temperature_frontier
+                if math.isclose(
+                    float(item["temperature"]), self.temperature, abs_tol=1e-12
+                )
+                and math.isclose(
+                    float(item["minimum_probability"]),
+                    self.minimum_probability,
+                    abs_tol=1e-12,
+                )
+            ),
+            {},
+        )
         return {
             "protocol_version": self.protocol_version,
             "evaluator_only": True,
@@ -158,7 +179,24 @@ class TeacherArtifact:
             "temperature_frontier": [dict(item) for item in self.temperature_frontier],
             "calibration_strategy": self.calibration_strategy,
             "repeat_weighting": self.repeat_weighting,
+            "sharpness_strategy": self.sharpness_strategy,
+            "objective_scale": self.objective_scale,
+            "objective_scale_scope": "train_categories_only",
+            "minimum_probability": self.minimum_probability,
+            "minimum_probability_candidates": list(
+                self.minimum_probability_candidates
+            ),
             "proper_loss": self.proper_loss,
+            "sharpness_target": (
+                "train_calibrated_zero_one_error_plus_runtime_and_failure"
+                if self.sharpness_strategy
+                == "train_robust_gap_validation_oracle_nll"
+                else "legacy_normalized_correctness_distribution"
+            ),
+            "selected_sharpness_diagnostics": selected_diagnostics,
+            "teacher_entropy_by_category": _teacher_entropy_by_category(
+                self.rows
+            ),
             "cost_weight": self.cost_weight,
             "failure_penalty": self.failure_penalty,
             "runtime": {
@@ -198,11 +236,13 @@ def build_teacher(
     routing_matrix_path: str | Path,
     fold_manifest_path: str | Path,
     fold: str,
-    temperatures: Sequence[float] = (0.05, 0.1, 0.25, 0.5, 1.0),
+    temperatures: Sequence[float] = (0.25, 0.5, 1.0, 2.0, 4.0),
     cost_weight: float = 0.05,
     failure_penalty: float = 2.0,
     calibration_strategy: str = "leave_one_train_category_out",
     repeat_weighting: str = "equal_category_equal_query_inverse_variant_frequency",
+    sharpness_strategy: str = "train_robust_gap_validation_oracle_nll",
+    minimum_probabilities: Sequence[float] = (0.005, 0.01, 0.025),
 ) -> TeacherArtifact:
     """Build train-only soft teacher targets for one category-held-out fold.
 
@@ -240,6 +280,11 @@ def build_teacher(
         "uniform_task",
     }:
         raise TeacherInputError("unsupported repeat_weighting")
+    if sharpness_strategy not in {
+        "train_robust_gap_validation_oracle_nll",
+        "legacy_raw_objective_soft_ce",
+    }:
+        raise TeacherInputError("unsupported sharpness_strategy")
     if (
         calibration_strategy == "leave_one_train_category_out"
         and len(split_categories["train"]) < 2
@@ -265,19 +310,6 @@ def build_teacher(
     calibration_by_expert = {
         item.expert_name: item for item in calibrations
     }
-    candidates = _temperatures(temperatures)
-    runtime_scale = _fit_runtime_scale(train_ids, outcomes, train_weights)
-    selected_temperature, validation_loss, temperature_frontier = _select_temperature(
-        validation_ids,
-        outcomes,
-        experts,
-        calibration_by_expert,
-        candidates,
-        validation_weights,
-        runtime_scale=runtime_scale,
-        cost_weight=resolved_cost_weight,
-        failure_penalty=resolved_failure_penalty,
-    )
     crossfit_by_category: dict[str, dict[str, ExpertScoreCalibration]] = {}
     for held_out_category in split_categories["train"]:
         if calibration_strategy == "leave_one_train_category_out":
@@ -294,6 +326,46 @@ def build_teacher(
             }
         else:
             crossfit_by_category[held_out_category] = dict(calibration_by_expert)
+    candidates = _temperatures(temperatures)
+    minimum_probability_candidates = _minimum_probabilities(
+        minimum_probabilities, len(experts)
+    )
+    if sharpness_strategy == "legacy_raw_objective_soft_ce":
+        minimum_probability_candidates = (0.0,)
+    runtime_scale = _fit_runtime_scale(train_ids, outcomes, train_weights)
+    objective_scale = (
+        _fit_objective_scale(
+            train_ids,
+            outcomes,
+            experts,
+            crossfit_by_category,
+            train_weights,
+            runtime_scale=runtime_scale,
+            cost_weight=resolved_cost_weight,
+            failure_penalty=resolved_failure_penalty,
+        )
+        if sharpness_strategy == "train_robust_gap_validation_oracle_nll"
+        else 1.0
+    )
+    (
+        selected_temperature,
+        selected_minimum_probability,
+        validation_loss,
+        temperature_frontier,
+    ) = _select_temperature(
+        validation_ids,
+        outcomes,
+        experts,
+        calibration_by_expert,
+        candidates,
+        validation_weights,
+        runtime_scale=runtime_scale,
+        cost_weight=resolved_cost_weight,
+        failure_penalty=resolved_failure_penalty,
+        sharpness_strategy=sharpness_strategy,
+        objective_scale=objective_scale,
+        minimum_probability_candidates=minimum_probability_candidates,
+    )
     rows = _teacher_rows(
         train_ids,
         outcomes,
@@ -306,6 +378,8 @@ def build_teacher(
         cost_weight=resolved_cost_weight,
         failure_penalty=resolved_failure_penalty,
         calibration_scope=calibration_strategy,
+        objective_scale=objective_scale,
+        minimum_probability=selected_minimum_probability,
     )
     return TeacherArtifact(
         fold=fold,
@@ -321,6 +395,15 @@ def build_teacher(
         failure_penalty=resolved_failure_penalty,
         calibration_strategy=calibration_strategy,
         repeat_weighting=repeat_weighting,
+        sharpness_strategy=sharpness_strategy,
+        objective_scale=objective_scale,
+        minimum_probability=selected_minimum_probability,
+        minimum_probability_candidates=minimum_probability_candidates,
+        proper_loss=(
+            "validation_train_calibrated_zero_one_cost_multiclass_log_loss"
+            if sharpness_strategy == "train_robust_gap_validation_oracle_nll"
+            else "validation_soft_correctness_cross_entropy"
+        ),
     )
 
 
@@ -330,11 +413,13 @@ def build_and_write_teacher(
     fold_manifest_path: str | Path,
     fold: str,
     output_path: str | Path,
-    temperatures: Sequence[float] = (0.05, 0.1, 0.25, 0.5, 1.0),
+    temperatures: Sequence[float] = (0.25, 0.5, 1.0, 2.0, 4.0),
     cost_weight: float = 0.05,
     failure_penalty: float = 2.0,
     calibration_strategy: str = "leave_one_train_category_out",
     repeat_weighting: str = "equal_category_equal_query_inverse_variant_frequency",
+    sharpness_strategy: str = "train_robust_gap_validation_oracle_nll",
+    minimum_probabilities: Sequence[float] = (0.005, 0.01, 0.025),
 ) -> TeacherArtifact:
     """Build and atomically write one evaluator-only teacher Parquet."""
 
@@ -347,6 +432,8 @@ def build_and_write_teacher(
         failure_penalty=failure_penalty,
         calibration_strategy=calibration_strategy,
         repeat_weighting=repeat_weighting,
+        sharpness_strategy=sharpness_strategy,
+        minimum_probabilities=minimum_probabilities,
     )
     write_teacher_parquet(artifact, output_path)
     return artifact
@@ -356,32 +443,54 @@ def ensure_evaluator_only_routing_matrix(path: str | Path) -> Path:
     """Reject every teacher source except an evaluator-only routing matrix."""
 
     source = Path(path)
-    parts = {part.casefold() for part in source.parts}
-    if "evaluator_only" not in parts or not source.stem.casefold().startswith(
-        "routing_matrix"
-    ):
+    try:
+        # Validate the filesystem target, not the caller-provided spelling.  In
+        # particular, a lexical ``evaluator_only/..`` component or an
+        # evaluator_only symlink/junction must not make an outside artifact
+        # eligible for teacher-side reads.
+        resolved_source = source.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise TeacherInputError(f"routing matrix does not exist: {source}") from exc
+    except (OSError, RuntimeError) as exc:
+        raise TeacherInputError(
+            f"could not resolve routing matrix path {source}: {exc}"
+        ) from exc
+    parts = {part.casefold() for part in resolved_source.parts}
+    is_routing_matrix = resolved_source.stem.casefold().startswith("routing_matrix")
+    if "evaluator_only" not in parts or not is_routing_matrix:
         raise TeacherIsolationError(
             "teacher may read only a routing_matrix* artifact under an "
             "evaluator_only directory"
         )
-    if source.suffix.casefold() not in {".csv", ".parquet"}:
+    if resolved_source.suffix.casefold() not in {".csv", ".parquet"}:
         raise TeacherIsolationError(
             "teacher routing matrix must be CSV or Parquet"
         )
-    if not source.is_file():
+    if not resolved_source.is_file():
         raise TeacherInputError(f"routing matrix does not exist: {source}")
-    return source
+    return resolved_source
 
 
 def ensure_evaluator_only_teacher_output(path: str | Path) -> Path:
     destination = Path(path)
-    if "evaluator_only" not in {part.casefold() for part in destination.parts}:
+    try:
+        # The leaf is normally new, so strict resolution is impossible.  The
+        # non-strict form still resolves every existing parent symlink/junction
+        # and removes ``..`` before the boundary is evaluated.
+        resolved_destination = destination.resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        raise TeacherIsolationError(
+            f"could not resolve teacher output path {destination}: {exc}"
+        ) from exc
+    if "evaluator_only" not in {
+        part.casefold() for part in resolved_destination.parts
+    }:
         raise TeacherIsolationError(
             "teacher targets must be written under an evaluator_only directory"
         )
-    if destination.suffix.casefold() != ".parquet":
+    if resolved_destination.suffix.casefold() != ".parquet":
         raise TeacherIsolationError("teacher target output must be Parquet")
-    return destination
+    return resolved_destination
 
 
 def write_teacher_parquet(
@@ -689,37 +798,73 @@ def _fit_expert_calibrations(
                 f"expert {expert!r} calibration requires successful train rows "
                 "from both labels"
             )
-        total_weight = sum(weights)
-        if total_weight <= 0.0:
-            raise TeacherInputError(f"expert {expert!r} has zero calibration weight")
-        mean = sum(weight * score for score, weight in zip(scores, weights)) / total_weight
-        variance = sum(
-            weight * (value - mean) ** 2
-            for value, weight in zip(scores, weights)
-        ) / total_weight
-        scale = math.sqrt(variance) if variance > 1e-12 else 1.0
-        standardized = [(value - mean) / scale for value in scores]
-        slope, intercept = _fit_logistic(standardized, labels, weights)
         fit_categories = tuple(
             sorted({outcomes[task_id].manifest["category"] for task_id in task_ids})
         )
         calibrations.append(
-            ExpertScoreCalibration(
+            fit_expert_score_calibration(
                 expert_name=expert,
-                score_mean=mean,
-                score_scale=scale,
-                slope=slope,
-                intercept=intercept,
-                sample_count=len(scores),
-                positive_count=sum(labels),
+                labels=labels,
+                scores=scores,
+                weights=weights,
+                fit_categories=fit_categories,
                 failure_count=sum(
                     outcomes[task_id].experts[expert].failed for task_id in task_ids
                 ),
-                effective_sample_weight=total_weight,
-                fit_categories=fit_categories,
             )
         )
     return tuple(calibrations)
+
+
+def fit_expert_score_calibration(
+    *,
+    expert_name: str,
+    labels: Sequence[int],
+    scores: Sequence[float],
+    weights: Sequence[float],
+    fit_categories: Sequence[str],
+    failure_count: int = 0,
+) -> ExpertScoreCalibration:
+    """Fit the shared train-only weighted Platt calibration protocol."""
+
+    if not expert_name or not (
+        len(labels) == len(scores) == len(weights)
+    ) or not labels:
+        raise TeacherInputError("expert score calibration inputs are misaligned")
+    if set(labels) != {0, 1}:
+        raise TeacherInputError(
+            f"expert {expert_name!r} calibration requires both labels"
+        )
+    parsed_scores = [float(value) for value in scores]
+    parsed_weights = [float(value) for value in weights]
+    if any(not math.isfinite(value) for value in parsed_scores) or any(
+        not math.isfinite(value) or value <= 0.0 for value in parsed_weights
+    ):
+        raise TeacherInputError("expert score calibration values are invalid")
+    total_weight = sum(parsed_weights)
+    mean = sum(
+        weight * score
+        for score, weight in zip(parsed_scores, parsed_weights)
+    ) / total_weight
+    variance = sum(
+        weight * (value - mean) ** 2
+        for value, weight in zip(parsed_scores, parsed_weights)
+    ) / total_weight
+    scale = math.sqrt(variance) if variance > 1e-12 else 1.0
+    standardized = [(value - mean) / scale for value in parsed_scores]
+    slope, intercept = _fit_logistic(standardized, labels, parsed_weights)
+    return ExpertScoreCalibration(
+        expert_name=expert_name,
+        score_mean=mean,
+        score_scale=scale,
+        slope=slope,
+        intercept=intercept,
+        sample_count=len(parsed_scores),
+        positive_count=sum(labels),
+        failure_count=int(failure_count),
+        effective_sample_weight=total_weight,
+        fit_categories=tuple(sorted({str(value) for value in fit_categories})),
+    )
 
 
 def _fit_logistic(
@@ -774,61 +919,136 @@ def _select_temperature(
     runtime_scale: tuple[float, float],
     cost_weight: float,
     failure_penalty: float,
-) -> tuple[float, float, tuple[dict[str, float], ...]]:
-    ranked: list[tuple[float, float, float, float]] = []
+    sharpness_strategy: str,
+    objective_scale: float,
+    minimum_probability_candidates: Sequence[float],
+) -> tuple[float, float, float, tuple[dict[str, float], ...]]:
+    ranked: list[dict[str, float]] = []
     for temperature in candidates:
-        weighted_loss = 0.0
-        weighted_entropy = 0.0
-        weighted_expected_utility = 0.0
-        weight_sum = 0.0
-        for task_id in task_ids:
-            components = _objective_components(
-                outcomes[task_id],
-                experts,
-                calibrations,
-                runtime_scale=runtime_scale,
-                cost_weight=cost_weight,
-                failure_penalty=failure_penalty,
+        for minimum_probability in minimum_probability_candidates:
+            weighted_loss = 0.0
+            weighted_entropy = 0.0
+            weighted_expected_utility = 0.0
+            weighted_selection_accuracy = 0.0
+            weighted_empirical_nll = 0.0
+            weighted_brier = 0.0
+            calibration_confidences: list[float] = []
+            calibration_correctness: list[float] = []
+            calibration_weights: list[float] = []
+            weight_sum = 0.0
+            for task_id in task_ids:
+                components = _objective_components(
+                    outcomes[task_id],
+                    experts,
+                    calibrations,
+                    runtime_scale=runtime_scale,
+                    cost_weight=cost_weight,
+                    failure_penalty=failure_penalty,
+                )
+                probabilities = _soft_target_distribution(
+                    [item[5] for item in components],
+                    temperature=temperature,
+                    objective_scale=objective_scale,
+                    minimum_probability=minimum_probability,
+                )
+                weight = task_weights[task_id]
+                empirical_index = _validation_empirical_winner_index(
+                    outcomes[task_id],
+                    experts,
+                    components,
+                    cost_weight=cost_weight,
+                )
+                selected_index = max(
+                    range(len(experts)),
+                    key=lambda index: (probabilities[index], -index),
+                )
+                confidence = max(probabilities)
+                is_correct = float(selected_index == empirical_index)
+                weighted_empirical_nll += weight * -math.log(
+                    max(probabilities[empirical_index], 1e-12)
+                )
+                weighted_brier += weight * sum(
+                    (
+                        probability
+                        - (1.0 if index == empirical_index else 0.0)
+                    )
+                    ** 2
+                    for index, probability in enumerate(probabilities)
+                )
+                calibration_confidences.append(confidence)
+                calibration_correctness.append(is_correct)
+                calibration_weights.append(weight)
+                if sharpness_strategy == "train_robust_gap_validation_oracle_nll":
+                    weighted_loss += weight * -math.log(
+                        max(probabilities[empirical_index], 1e-12)
+                    )
+                    weighted_selection_accuracy += weight * is_correct
+                else:
+                    target = _normalize_nonnegative(
+                        [item[1] for item in components],
+                        "validation correctness utilities",
+                    )
+                    weighted_loss += weight * -sum(
+                        target_value * math.log(max(probability, 1e-12))
+                        for target_value, probability in zip(target, probabilities)
+                    )
+                    weighted_selection_accuracy += weight * is_correct
+                weighted_entropy += weight * -sum(
+                    probability * math.log(max(probability, 1e-12))
+                    for probability in probabilities
+                )
+                weighted_expected_utility += weight * sum(
+                    probability * item[1]
+                    for probability, item in zip(probabilities, components)
+                )
+                weight_sum += weight
+            average_entropy = weighted_entropy / weight_sum
+            ranked.append(
+                {
+                    "validation_calibration_loss": weighted_loss / weight_sum,
+                    "temperature": float(temperature),
+                    "minimum_probability": float(minimum_probability),
+                    "validation_distribution_entropy": average_entropy,
+                    "validation_effective_class_count": math.exp(average_entropy),
+                    "validation_expected_correctness": (
+                        weighted_expected_utility / weight_sum
+                    ),
+                    "validation_selection_accuracy": (
+                        weighted_selection_accuracy / weight_sum
+                    ),
+                    "validation_empirical_nll": weighted_empirical_nll / weight_sum,
+                    "validation_multiclass_brier": weighted_brier / weight_sum,
+                    "validation_ece": _weighted_ece(
+                        calibration_confidences,
+                        calibration_correctness,
+                        calibration_weights,
+                    ),
+                }
             )
-            target = _normalize_nonnegative(
-                [item[1] for item in components], "validation correctness utilities"
-            )
-            probabilities = _softmax(
-                [-item[5] for item in components], temperature
-            )
-            weight = task_weights[task_id]
-            weighted_loss += weight * -sum(
-                target_value * math.log(max(probability, 1e-12))
-                for target_value, probability in zip(target, probabilities)
-            )
-            weighted_entropy += weight * -sum(
-                probability * math.log(max(probability, 1e-12))
-                for probability in probabilities
-            )
-            weighted_expected_utility += weight * sum(
-                probability * item[1]
-                for probability, item in zip(probabilities, components)
-            )
-            weight_sum += weight
-        ranked.append(
-            (
-                weighted_loss / weight_sum,
-                temperature,
-                weighted_entropy / weight_sum,
-                weighted_expected_utility / weight_sum,
-            )
-        )
-    loss, temperature, _, _ = min(ranked, key=lambda item: (item[0], item[1]))
-    frontier = tuple(
-        {
-            "temperature": float(item[1]),
-            "validation_soft_cross_entropy": float(item[0]),
-            "validation_distribution_entropy": float(item[2]),
-            "validation_expected_correctness": float(item[3]),
-        }
-        for item in sorted(ranked, key=lambda item: item[1])
+    selected = min(
+        ranked,
+        key=lambda item: (
+            item["validation_calibration_loss"],
+            -item["validation_selection_accuracy"],
+            item["temperature"],
+            item["minimum_probability"],
+        ),
     )
-    return temperature, loss, frontier
+    frontier = tuple(
+        dict(item)
+        for item in sorted(
+            ranked,
+            key=lambda item: (
+                item["temperature"], item["minimum_probability"]
+            ),
+        )
+    )
+    return (
+        selected["temperature"],
+        selected["minimum_probability"],
+        selected["validation_calibration_loss"],
+        frontier,
+    )
 
 
 def _teacher_rows(
@@ -846,6 +1066,8 @@ def _teacher_rows(
     cost_weight: float,
     failure_penalty: float,
     calibration_scope: str,
+    objective_scale: float,
+    minimum_probability: float,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for task_id in task_ids:
@@ -860,7 +1082,12 @@ def _teacher_rows(
             cost_weight=cost_weight,
             failure_penalty=failure_penalty,
         )
-        distribution = _softmax([-item[5] for item in components], temperature)
+        distribution = _soft_target_distribution(
+            [item[5] for item in components],
+            temperature=temperature,
+            objective_scale=objective_scale,
+            minimum_probability=minimum_probability,
+        )
         hard_index = min(
             range(len(experts)), key=lambda index: (components[index][5], index)
         )
@@ -923,6 +1150,100 @@ def _teacher_rows(
     return rows
 
 
+def _fit_objective_scale(
+    task_ids: Sequence[str],
+    outcomes: Mapping[str, _TaskOutcome],
+    experts: Sequence[str],
+    calibrations_by_held_out_category: Mapping[
+        str, Mapping[str, ExpertScoreCalibration]
+    ],
+    task_weights: Mapping[str, float],
+    *,
+    runtime_scale: tuple[float, float],
+    cost_weight: float,
+    failure_penalty: float,
+) -> float:
+    """Fit one robust utility-gap scale from cross-fitted train categories.
+
+    The scale makes temperature dimensionless and prevents raw Platt-loss
+    magnitudes from forcing almost-uniform targets.  Each task contributes its
+    positive regrets from the best expert using the same grouped/inverse-
+    frequency weight as teacher fitting.
+    """
+
+    gaps: list[float] = []
+    weights: list[float] = []
+    for task_id in task_ids:
+        task = outcomes[task_id]
+        calibrations = calibrations_by_held_out_category[
+            task.manifest["category"]
+        ]
+        components = _objective_components(
+            task,
+            experts,
+            calibrations,
+            runtime_scale=runtime_scale,
+            cost_weight=cost_weight,
+            failure_penalty=failure_penalty,
+        )
+        best = min(item[5] for item in components)
+        for item in components:
+            gap = item[5] - best
+            if gap > 1e-12:
+                gaps.append(gap)
+                weights.append(task_weights[task_id])
+    if not gaps:
+        return 1.0
+    scale = _weighted_quantile(gaps, weights, 0.5)
+    if not math.isfinite(scale) or scale <= 1e-12:
+        raise TeacherInputError("train-only objective scale is invalid")
+    return scale
+
+
+def _validation_empirical_winner_index(
+    task: _TaskOutcome,
+    experts: Sequence[str],
+    components: Sequence[tuple[float | None, float, float, float, float, float]],
+    *,
+    cost_weight: float,
+) -> int:
+    """Select a scale-invariant validation winner for sharpness fitting.
+
+    Raw anomaly scores from different experts are not comparable.  Each
+    validation prediction is therefore converted with that expert's
+    train-only Platt calibration and thresholded at the predeclared 0.5
+    decision boundary.  The empirical target minimizes zero-one error plus
+    normalized runtime and the explicit failure penalty.  This target is
+    discrete rather than a normalized copy of the soft objective, avoiding
+    the v2 temperature identity while remaining invariant to positive affine
+    score transforms applied independently to each expert.
+    """
+
+    if len(components) != len(experts):
+        raise TeacherInputError("validation objective components are misaligned")
+    observed_objectives: list[float] = []
+    successful = False
+    for expert, component in zip(experts, components):
+        anomaly_probability, _, _, normalized_cost, failure_value, _ = component
+        if task.experts[expert].failed or anomaly_probability is None:
+            classification_error = 1.0
+        else:
+            successful = True
+            predicted_label = int(anomaly_probability >= 0.5)
+            classification_error = float(predicted_label != task.label)
+        observed_objectives.append(
+            classification_error
+            + cost_weight * normalized_cost
+            + failure_value
+        )
+    if not successful:
+        raise TeacherInputError("validation task has no successful expert")
+    return min(
+        range(len(experts)),
+        key=lambda index: (observed_objectives[index], index),
+    )
+
+
 def _objective_components(
     task: _TaskOutcome,
     experts: Sequence[str],
@@ -977,8 +1298,10 @@ def _balanced_task_weights(
             variant_weight = group_mass / len(variants)
             for task_id in variants:
                 raw[task_id] = variant_weight
-    normalization = len(task_ids) / sum(raw.values())
-    return {task_id: raw[task_id] * normalization for task_id in task_ids}
+    # Raw mass is exactly one per category.  Keeping that fixed (rather than
+    # renormalizing to the number of repeated K/seed rows) also keeps Platt's
+    # regularization strength invariant when a query gains duplicate variants.
+    return {task_id: raw[task_id] for task_id in task_ids}
 
 
 def _uniform_task_weights(
@@ -1079,6 +1402,31 @@ def _temperatures(values: Sequence[float]) -> tuple[float, ...]:
     return result
 
 
+def _minimum_probabilities(
+    values: Sequence[float], number_of_experts: int
+) -> tuple[float, ...]:
+    if isinstance(values, (str, bytes)):
+        raise TeacherInputError("minimum_probabilities must be a sequence")
+    try:
+        result = tuple(float(value) for value in values)
+    except (TypeError, ValueError) as exc:
+        raise TeacherInputError("minimum_probabilities must be numeric") from exc
+    upper = 1.0 / number_of_experts
+    if (
+        not result
+        or any(
+            not math.isfinite(value) or value < 0.0 or value >= upper
+            for value in result
+        )
+        or tuple(sorted(set(result))) != result
+    ):
+        raise TeacherInputError(
+            "minimum_probabilities must be sorted, unique, finite, non-negative, "
+            "and smaller than 1 / number_of_experts"
+        )
+    return result
+
+
 def _manifest_key(row: Mapping[str, str]) -> tuple[str, ...]:
     return (
         row["image_id"],
@@ -1130,6 +1478,109 @@ def _softmax(utilities: Sequence[float], temperature: float) -> list[float]:
     exponentials = [math.exp(value - maximum) for value in logits]
     denominator = sum(exponentials)
     return [value / denominator for value in exponentials]
+
+
+def _weighted_ece(
+    confidences: Sequence[float],
+    correctness: Sequence[float],
+    weights: Sequence[float],
+    *,
+    bin_count: int = 10,
+) -> float:
+    if not (
+        len(confidences) == len(correctness) == len(weights)
+        and confidences
+        and bin_count > 0
+    ):
+        raise TeacherInputError("calibration diagnostics are empty/misaligned")
+    bins = [[0.0, 0.0, 0.0] for _ in range(bin_count)]
+    total_weight = 0.0
+    for confidence, correct, weight in zip(confidences, correctness, weights):
+        if not (
+            math.isfinite(confidence)
+            and 0.0 <= confidence <= 1.0
+            and correct in {0.0, 1.0}
+            and math.isfinite(weight)
+            and weight > 0.0
+        ):
+            raise TeacherInputError("calibration diagnostics are invalid")
+        index = min(int(confidence * bin_count), bin_count - 1)
+        bins[index][0] += weight
+        bins[index][1] += weight * confidence
+        bins[index][2] += weight * correct
+        total_weight += weight
+    return sum(
+        (bin_weight / total_weight)
+        * abs(weighted_confidence / bin_weight - weighted_correct / bin_weight)
+        for bin_weight, weighted_confidence, weighted_correct in bins
+        if bin_weight > 0.0
+    )
+
+
+def _teacher_entropy_by_category(
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, dict[str, float | int]]:
+    tasks: dict[str, list[Mapping[str, Any]]] = {}
+    for row in rows:
+        tasks.setdefault(str(row["task_id"]), []).append(row)
+    staged: dict[str, list[tuple[float, float, float]]] = {}
+    for task_rows in tasks.values():
+        probabilities = [
+            float(row["soft_utility_probability"]) for row in task_rows
+        ]
+        entropy = -sum(
+            probability * math.log(max(probability, 1e-12))
+            for probability in probabilities
+        )
+        category = str(task_rows[0]["category"])
+        weight = float(task_rows[0]["sample_weight"])
+        staged.setdefault(category, []).append(
+            (entropy, max(probabilities), weight)
+        )
+    result: dict[str, dict[str, float | int]] = {}
+    for category, values in sorted(staged.items()):
+        total_weight = sum(weight for _, _, weight in values)
+        average = sum(
+            entropy * weight for entropy, _, weight in values
+        ) / total_weight
+        top1 = sum(
+            probability * weight for _, probability, weight in values
+        ) / total_weight
+        result[category] = {
+            "task_count": len(values),
+            "weighted_entropy": average,
+            "weighted_effective_class_count": math.exp(average),
+            "weighted_top1_probability": top1,
+        }
+    return result
+
+
+def _soft_target_distribution(
+    objectives: Sequence[float],
+    *,
+    temperature: float,
+    objective_scale: float,
+    minimum_probability: float,
+) -> list[float]:
+    if (
+        not objectives
+        or any(not math.isfinite(value) for value in objectives)
+        or not math.isfinite(objective_scale)
+        or objective_scale <= 0.0
+    ):
+        raise TeacherInputError("soft-target objectives/scale must be finite")
+    best = min(objectives)
+    probabilities = _softmax(
+        [-(value - best) / objective_scale for value in objectives],
+        temperature,
+    )
+    remaining_mass = 1.0 - len(probabilities) * minimum_probability
+    if remaining_mass <= 0.0:
+        raise TeacherInputError("minimum_probability leaves no soft-target mass")
+    return [
+        minimum_probability + remaining_mass * probability
+        for probability in probabilities
+    ]
 
 
 def _sigmoid(value: float) -> float:
@@ -1211,6 +1662,7 @@ __all__ = [
     "build_teacher",
     "ensure_evaluator_only_routing_matrix",
     "ensure_evaluator_only_teacher_output",
+    "fit_expert_score_calibration",
     "read_teacher_parquet",
     "write_teacher_parquet",
 ]

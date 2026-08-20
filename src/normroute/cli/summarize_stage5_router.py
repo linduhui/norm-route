@@ -211,8 +211,14 @@ def main(argv: list[str] | None = None) -> int:
             "platform": platform.platform(),
         },
         "predictions": prediction_paths,
-        "outputs": {**outputs, "failures": str(failures_path)},
         "failures": failures,
+    }
+    run_outputs = {**outputs, "failures": str(failures_path)}
+    run["outputs"] = run_outputs
+    run["output_hashes"] = {
+        name: file_sha256(path)
+        for name, path in run_outputs.items()
+        if path is not None and Path(path).is_file()
     }
     atomic_write_json(output_dir / "run.json", run)
     if failures:
@@ -400,6 +406,10 @@ def _comparison_setting_names(experiment_family: str) -> tuple[str, ...]:
         "standardization",
         "supervision_target",
         "test_prediction_contract",
+        "uncertainty_mode",
+        "validation_runtime_tradeoff",
+        "validation_selection_metric",
+        "repeat_weighting",
     )
     if experiment_family == "teacher_ecpb":
         return tuple(name for name in names if name != "supervision_target")

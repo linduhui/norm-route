@@ -41,6 +41,16 @@ _FORBIDDEN_NAMES = frozenset(
         "hard_oracle",
     }
 )
+_FORBIDDEN_SCHEMA_TOKENS = frozenset(
+    {
+        "score",
+        "scores",
+        "utility",
+        "utilities",
+        "outcome",
+        "outcomes",
+    }
+)
 
 
 class Stage5DatasetError(ValueError):
@@ -267,46 +277,71 @@ def _forbidden_paths(value: Any, context: str = "root") -> list[str]:
     if isinstance(value, Mapping):
         for key, child in value.items():
             name = str(key)
-            normalized = re.sub(r"[^a-z0-9]+", "_", name.casefold()).strip("_")
-            tokens = set(normalized.split("_"))
-            if (
-                normalized in _FORBIDDEN_NAMES
-                or "label" in tokens
-                or "mask" in tokens
-                or "oracle" in tokens
-                or "teacher" in tokens
-                or (
-                    "expert" in tokens
-                    and tokens.intersection(
-                        {"score", "scores", "utility", "utilities", "outcome", "outcomes"}
-                    )
-                )
-                or (
-                    "score" in tokens
-                    and tokens.intersection({"patchcore", "winclip", "anomalydino"})
-                )
-            ):
+            if is_forbidden_inference_feature_name(name):
                 findings.append(f"{context}.{name}")
             findings.extend(_forbidden_paths(child, f"{context}.{name}"))
     elif isinstance(value, (list, tuple)):
         for index, child in enumerate(value):
             # Feature names are data values but still form the model schema.
             if isinstance(child, str):
-                normalized = re.sub(r"[^a-z0-9]+", "_", child.casefold()).strip("_")
-                tokens = set(normalized.split("_"))
-                if tokens.intersection({"label", "mask", "oracle", "teacher"}) or (
-                    "expert" in tokens
-                    and tokens.intersection(
-                        {"score", "scores", "utility", "utilities", "outcome", "outcomes"}
-                    )
-                ) or (
-                    "score" in tokens
-                    and tokens.intersection({"patchcore", "winclip", "anomalydino"})
-                ):
+                if is_forbidden_inference_feature_name(child):
                     findings.append(f"{context}[{index}]")
             else:
                 findings.extend(_forbidden_paths(child, f"{context}[{index}]"))
     return findings
+
+
+def is_forbidden_inference_feature_name(value: str) -> bool:
+    """Return whether a raw field/schema name could expose evaluator outcomes.
+
+    The isolation boundary is deliberately conservative: every spelling that
+    contains ``score``, ``utility``/``utilities`` or ``outcome`` after
+    separator/case normalization is rejected.  Router feature schemas do not
+    need those evaluator-semantic words, so ambiguous compounds are unsafe.
+    """
+
+    # Preserve camel-case boundaries before case-folding so alternative schema
+    # spellings cannot bypass the same policy enforced for snake/kebab case.
+    separated = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(value))
+    normalized = re.sub(r"[^a-z0-9]+", "_", separated.casefold()).strip("_")
+    tokens = set(normalized.split("_")) if normalized else set()
+    compact = normalized.replace("_", "")
+    return (
+        normalized in _FORBIDDEN_NAMES
+        or bool(
+            tokens.intersection(
+                {
+                    "label",
+                    "labels",
+                    "mask",
+                    "masks",
+                    "defect",
+                    "oracle",
+                    "teacher",
+                    "target",
+                    "targets",
+                }
+            )
+        )
+        or bool(tokens.intersection(_FORBIDDEN_SCHEMA_TOKENS))
+        or any(
+            stem in compact
+            for stem in ("score", "utility", "utilities", "outcome")
+        )
+        or any(
+            stem in compact
+            for stem in (
+                "label",
+                "mask",
+                "defect",
+                "anomalytype",
+                "groundtruth",
+                "oracle",
+                "teacher",
+                "target",
+            )
+        )
+    )
 
 
 def _text(value: Any, field: str) -> str:

@@ -1,0 +1,65 @@
+{
+  "protocol_version": "stage5.teacher_ecpb_experiment.v3",
+  "teacher": {
+    "protocol_version": "stage5.teacher.v3",
+    "score_calibration": "leave_one_train_category_out_weighted_platt",
+    "repeat_weighting": "equal_category_equal_query_inverse_variant_frequency",
+    "objective": "negative_log_calibrated_correctness_plus_runtime_and_failure",
+    "objective_gap_scale": "weighted_median_positive_regret_train_only_crossfit",
+    "target_transform": "dimensionless_regret_boltzmann_with_probability_floor",
+    "temperatures": [0.25, 0.5, 1.0, 2.0, 4.0],
+    "minimum_probabilities": [0.005, 0.01, 0.025],
+    "sharpness_selection_target": "train_calibrated_zero_one_error_plus_runtime_and_failure",
+    "sharpness_selection_metric": "grouped_weighted_validation_empirical_winner_multiclass_nll",
+    "cost_weight": 0.05,
+    "failure_penalty": 2.0,
+    "fit_split": "train_categories_only",
+    "hyperparameter_split": "validation_categories_only",
+    "serialized_split": "train_categories_only",
+    "test_visibility": "never"
+  },
+  "capability_bank": {
+    "statistics_split": "train_categories_only",
+    "skills": ["boundary", "fgbg", "lowshot", "texture"],
+    "costs": ["latency_p50", "latency_p95"],
+    "reliability": ["failure_rate", "failure_counts"],
+    "bootstrap_unit": "category",
+    "bootstrap_replicates": 1000,
+    "bootstrap_seed": 0
+  },
+  "router": {
+    "supervision": "soft_teacher",
+    "capability_weight_grid": [0.0, 0.25, 0.5],
+    "uncertainty_mode": "entropy_scaled_lcb",
+    "uncertainty_formula": "normalized_predictive_entropy_times_profile_lcb_risk_gap_plus_failure_upper_excess",
+    "uncertainty_weight_grid": [0.0, 0.25, 0.5, 1.0, 2.0],
+    "cost_weight_grid": [0.0, 0.05, 0.1],
+    "validation_runtime_tradeoff": 0.05,
+    "validation_selection_metric": "train_calibrated_zero_one_error_plus_normalized_runtime",
+    "repeat_weighting": "equal_category_equal_query_inverse_variant_frequency",
+    "hyperparameter_split": "validation_categories_only",
+    "test_visibility": "after_label_free_predictions_are_frozen"
+  },
+  "required_diagnostics": {
+    "teacher": ["validation_empirical_nll", "validation_multiclass_brier", "validation_ece", "teacher_entropy_by_category", "train_teacher_top1_probability"],
+    "router": ["selected_capability_policies", "capability_route_change_rate", "uncertainty_route_change_rate", "cost_route_change_rate"],
+    "router_protocol": "stage5.router_run.v2",
+    "metrics_protocol": "stage5.router_metrics.v2",
+    "prediction_protocol": "stage5.router_prediction.v2",
+    "per_task_protocol": "stage5.router_per_task_metrics.v2"
+  },
+  "three_seed_required_variants": [
+    "hard_oracle",
+    "soft_teacher_legacy_target",
+    "soft_teacher_no_bank",
+    "soft_teacher_static",
+    "soft_teacher_full",
+    "soft_no_capability",
+    "soft_no_uncertainty",
+    "soft_no_cost"
+  ],
+  "seeds": [0, 1, 2],
+  "folds": ["fold0", "fold1", "fold2", "fold3", "fold4"],
+  "required_router_runs": 120,
+  "claims_policy": "no innovation claim until all runs, summaries, isolation audits, and paired multi-seed deltas pass"
+}

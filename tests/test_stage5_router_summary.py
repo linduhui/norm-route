@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
+
 import pytest
 
+from src.normroute.cli import summarize_stage5_router as summary_cli
 from src.normroute.cli.summarize_stage5_router import (
     _comparison_setting_names,
     _expected_feature_view,
@@ -163,3 +168,46 @@ def test_router_summary_accepts_explicit_fbdp_paired_comparison() -> None:
     assert {row["comparison"] for row in paired} == {"add_fbdp"}
     auroc = next(row for row in paired if row["metric"] == "image_auroc")
     assert auroc["mean_paired_delta"] == pytest.approx(0.06)
+
+
+def test_router_summary_hashes_every_output_except_its_run_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    records = [
+        _record("fold0", "normal_only", auroc=0.7, method=method)
+        for method in ("learned_router", "global_best", "sample_oracle")
+    ]
+    monkeypatch.setattr(
+        summary_cli,
+        "load_cv_records",
+        lambda *args, **kwargs: (records, {"source": "abc"}, ["prediction.jsonl"]),
+    )
+    output_dir = tmp_path / "summary"
+
+    result = summary_cli.main(
+        [
+            "--input-root",
+            str(tmp_path / "inputs"),
+            "--output-dir",
+            str(output_dir),
+            "--folds",
+            "fold0",
+            "--variants",
+            "normal_only",
+            "--paired-comparison",
+            "normal_only",
+            "normal_only",
+            "identity",
+            "--reference-variant",
+            "normal_only",
+        ]
+    )
+
+    assert result == 0
+    run = json.loads((output_dir / "run.json").read_text(encoding="utf-8"))
+    assert set(run["output_hashes"]) == set(run["outputs"])
+    assert "run" not in run["output_hashes"]
+    for name, raw_path in run["outputs"].items():
+        path = Path(raw_path)
+        expected = hashlib.sha256(path.read_bytes()).hexdigest()
+        assert run["output_hashes"][name] == expected

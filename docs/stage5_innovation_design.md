@@ -238,9 +238,17 @@ calibration and proper per-query loss.  Teacher labels/utilities may be used in
 the isolated training pipeline but must never appear in inference-visible
 artifacts.
 
-Uncertainty should represent unseen-category and finite-support uncertainty;
-a category/bootstrap ensemble is preferred to an uncalibrated single variance
-head.  Validation categories calibrate uncertainty and lambda values.
+Uncertainty should represent unseen-category and finite-support uncertainty.
+The implemented minimum mechanism combines Router predictive entropy with the
+expert-specific risk gap to a train-category-bootstrap capability lower bound;
+validation categories calibrate its lambda. A category/bootstrap Router
+ensemble remains the preferred stronger follow-up and must be evaluated as a
+separate protocol rather than silently substituted into the current results.
+The current v3 closure also calibrates each expert with the shared train-only
+weighted Platt protocol and selects policy weights by a frozen validation
+zero-one-plus-runtime loss. This removes cross-expert raw-score comparisons;
+teacher NLL/Brier/ECE/entropy and policy/route-change diagnostics are required
+before any sharpness, uncertainty, or cost contribution is claimed.
 
 ## 9. Recommended contribution hierarchy
 

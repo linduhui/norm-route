@@ -7,7 +7,11 @@ from pathlib import Path
 import sys
 from typing import Any
 
-from ..router.teacher import TEACHER_PARQUET_NAME, build_and_write_teacher
+from ..router.teacher import (
+    TEACHER_PARQUET_NAME,
+    build_and_write_teacher,
+    ensure_evaluator_only_routing_matrix,
+)
 from .stage5_artifacts import (
     atomic_write_json,
     environment_record,
@@ -27,7 +31,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument(
-        "--temperatures", type=float, nargs="+", default=(0.05, 0.1, 0.25, 0.5, 1.0)
+        "--temperatures", type=float, nargs="+", default=(0.25, 0.5, 1.0, 2.0, 4.0)
+    )
+    parser.add_argument(
+        "--minimum-probabilities",
+        type=float,
+        nargs="+",
+        default=(0.005, 0.01, 0.025),
+        help=(
+            "Per-expert probability floors calibrated jointly with temperature "
+            "on validation categories."
+        ),
     )
     parser.add_argument("--cost-weight", type=float, default=0.05)
     parser.add_argument("--failure-penalty", type=float, default=2.0)
@@ -44,6 +58,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
         default="equal_category_equal_query_inverse_variant_frequency",
     )
+    parser.add_argument(
+        "--sharpness-strategy",
+        choices=(
+            "train_robust_gap_validation_oracle_nll",
+            "legacy_raw_objective_soft_ce",
+        ),
+        default="train_robust_gap_validation_oracle_nll",
+    )
     parser.add_argument("--seed", type=int, default=0)
     return parser.parse_args(argv)
 
@@ -57,23 +79,29 @@ def main(argv: list[str] | None = None) -> int:
     metadata: dict[str, Any] = {}
     input_hashes: dict[str, str] = {}
     try:
+        # Resolve and enforce the evaluator-only boundary before hashing this
+        # or any other input.  The returned canonical path is also the only
+        # routing-matrix path subsequently read by the builder.
+        routing_matrix = ensure_evaluator_only_routing_matrix(args.routing_matrix)
         input_hashes = {
-            "routing_matrix": file_sha256(args.routing_matrix),
+            "routing_matrix": file_sha256(routing_matrix),
             "fold_manifest": file_sha256(args.fold_manifest),
         }
         for fold in folds:
             output_dir = root / fold if args.fold == "all" else root
             teacher_path = output_dir / TEACHER_PARQUET_NAME
             artifact = build_and_write_teacher(
-                routing_matrix_path=args.routing_matrix,
+                routing_matrix_path=routing_matrix,
                 fold_manifest_path=args.fold_manifest,
                 fold=fold,
                 output_path=teacher_path,
                 temperatures=args.temperatures,
+                minimum_probabilities=args.minimum_probabilities,
                 cost_weight=args.cost_weight,
                 failure_penalty=args.failure_penalty,
                 calibration_strategy=args.calibration_strategy,
                 repeat_weighting=args.repeat_weighting,
+                sharpness_strategy=args.sharpness_strategy,
             )
             metadata_path = atomic_write_json(output_dir / "teacher_metadata.json", artifact.metadata())
             outputs[f"{fold}.teacher"] = str(teacher_path)
@@ -97,10 +125,12 @@ def main(argv: list[str] | None = None) -> int:
             "fold_manifest": args.fold_manifest,
             "fold": args.fold,
             "temperatures": list(args.temperatures),
+            "minimum_probabilities": list(args.minimum_probabilities),
             "cost_weight": args.cost_weight,
             "failure_penalty": args.failure_penalty,
             "calibration_strategy": args.calibration_strategy,
             "repeat_weighting": args.repeat_weighting,
+            "sharpness_strategy": args.sharpness_strategy,
             "seed": args.seed,
         },
         "seed": args.seed,

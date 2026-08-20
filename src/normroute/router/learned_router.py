@@ -12,7 +12,7 @@ import math
 from typing import Any, Mapping, Sequence
 
 
-STAGE5_LINEAR_ROUTER_PROTOCOL_VERSION = "stage5.linear_router.v1"
+STAGE5_LINEAR_ROUTER_PROTOCOL_VERSION = "stage5.linear_router.v2"
 
 
 class Stage5RouterError(ValueError):
@@ -213,7 +213,10 @@ def fit_linear_router(
         (validation_x - location) / scale, dtype=np.float32
     )
     class_weights = _balanced_class_weights(
-        train_y, len(expert_names), np
+        train_y,
+        train_weights,
+        len(expert_names),
+        np,
     )
 
     fitted: list[tuple[float, float, float, Any, Any, str]] = []
@@ -458,11 +461,29 @@ def _target_distributions(value: Any, rows: int, classes: int, np: Any) -> Any:
     return distributions / totals[:, None]
 
 
-def _balanced_class_weights(targets: Any, classes: int, np: Any) -> Any:
-    counts = np.sum(targets, axis=0, dtype=np.float64)
+def _balanced_class_weights(
+    targets: Any,
+    base_sample_weights: Any,
+    classes: int,
+    np: Any,
+) -> Any:
+    """Balance classes from effective grouped mass, not repeated row counts.
+
+    The caller's inverse-frequency weights define one unit of mass per query.
+    Using unweighted row counts here would reintroduce a K/seed-repeat bias
+    after that correction, because duplicating a query would alter the class
+    prior even though the duplicate rows share the original query's mass.
+    """
+
+    counts = np.sum(
+        targets * base_sample_weights[:, None],
+        axis=0,
+        dtype=np.float64,
+    )
+    total_mass = float(np.sum(base_sample_weights, dtype=np.float64))
     weights = np.zeros(classes, dtype=np.float64)
     present = counts > 0
-    weights[present] = targets.shape[0] / (float(classes) * counts[present])
+    weights[present] = total_mass / (float(classes) * counts[present])
     return weights
 
 
